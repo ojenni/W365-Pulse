@@ -16,6 +16,9 @@ laptop display), always visible, while you work on other monitors.
   interrupts your typing. `A_TimeIdlePhysical` ignores the synthetic key it sends.
 - A **hard ceiling** (default 14 min, under the 15-min timeout) forces a pulse even if
   you never pause — because your work on other monitors sends no input to the VM.
+- If **no session window is open**, it doesn't busy-poll: it enters a *waiting* state
+  (shown in the tray tooltip) and re-checks every **5 minutes**, then resumes the
+  instant your Cloud PC window reappears.
 
 ## Run
 Double-click `W365Pulse.ahk`, or:
@@ -29,9 +32,25 @@ It lives in the system tray (teal pulse icon = active, grey = paused). No consol
 - **Pulse now** – send a keep-alive immediately (also the double-click action)
 - **Pulse interval** – quick 8 / 10 / 12 minute presets
 - **Re-detect window** – shows which window it's targeting
+- **Check environment** – reports whether the prerequisites are present (below)
 - **Settings...** – the configuration window (below)
 - **Start with Windows** – adds/removes an HKCU `Run` entry
 - **Open log file** / **Exit**
+
+## Environment check
+On startup the app verifies its prerequisites and **only interrupts you if something
+is missing**:
+
+- **AutoHotkey v2** – the runtime (always present when run as a script).
+- **A Windows 365 / Remote Desktop client** – detected as a running `msrdc.exe` /
+  `Windows365.exe`, an installed Windows App / Remote Desktop client on disk, or a
+  session window that's already open.
+
+If none is found, a dialog tells you what's missing and where to get it
+(Windows App: https://aka.ms/windowsapp, or browser access at
+https://windows.cloud.microsoft — then pick that window in *Settings > Target
+window*). Run it any time from the tray's **Check environment** item for a full
+status report.
 
 ## Settings window
 Right-click the tray icon and choose **Settings...**. Everything is set with

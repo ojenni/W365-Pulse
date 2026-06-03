@@ -36,27 +36,43 @@ KeyLabels := ["F15 - invisible (recommended)", "F14", "F13", "Shift tap", "Mouse
 LoadConfig()
 Paused   := !Cfg["Enabled"]
 LastPulse := 0                  ; A_TickCount of last successful pulse (0 = pulse soon)
+Waiting   := false              ; true while no W365 session window is present
+NextWindowCheck := 0            ; A_TickCount gate for the 5-minute re-check while waiting
 
 BuildTray()
 SetTimer(Tick, 20000)           ; evaluate every 20s
 Tick()                          ; and once right now
 Log("Started (interval " Cfg["IntervalMin"] "m, ceiling " Cfg["MaxMin"] "m, idle gate " Cfg["IdleSec"] "s)")
+CheckEnvironment()              ; warn at startup only if a prerequisite is missing
 
 ; ============================================================================
 ;  Core loop
 ; ============================================================================
 Tick(*) {
-    global LastPulse, Cfg, Paused
+    global LastPulse, Cfg, Paused, Waiting, NextWindowCheck
     UpdateTip()
     if Paused
         return
     elapsed := A_TickCount - LastPulse
-    soft := Cfg["IntervalMin"] * 60000
-    hard := Cfg["MaxMin"]      * 60000
-    if (elapsed < soft)
+    if (elapsed < Cfg["IntervalMin"] * 60000)
         return
+    ; It's time to pulse - but only if a W365 session window actually exists.
+    if (Waiting && A_TickCount < NextWindowCheck)
+        return                                                ; still in the 5-minute back-off
+    if !GetTargetHwnd() {
+        if !Waiting
+            Log("No W365 session window - waiting; re-checking every 5 minutes")
+        Waiting := true
+        NextWindowCheck := A_TickCount + 300000               ; 5 minutes
+        UpdateTip()
+        return
+    }
+    if Waiting {
+        Log("W365 session window found - resuming keep-alive")
+        Waiting := false
+    }
     idleOk := (A_TimeIdlePhysical >= Cfg["IdleSec"] * 1000)   ; physical = ignores our own input
-    if (!idleOk && elapsed < hard)
+    if (!idleOk && elapsed < Cfg["MaxMin"] * 60000)
         return                                                ; wait for a pause, up to the ceiling
     DoPulse(false)
 }
@@ -129,6 +145,7 @@ BuildTray() {
     tray.Add("Pulse interval", sub)
     global IntervalSub := sub
     tray.Add("Re-detect window", (*) => Redetect())
+    tray.Add("Check environment", (*) => CheckEnvironment(true))
     tray.Add()
     tray.Add("Settings...",    ShowSettings)
     tray.Add("Start with Windows", MenuToggleStartup)
@@ -157,7 +174,7 @@ RefreshChecks() {
 }
 
 UpdateTip() {
-    global Paused, LastPulse, ActiveIcon, PausedIcon
+    global Paused, LastPulse, ActiveIcon, PausedIcon, Waiting
     static CurIcon := ""
     if Paused {
         A_IconTip := "W365 Pulse - Paused"
@@ -168,6 +185,10 @@ UpdateTip() {
     }
     if (CurIcon != "a" && FileExist(ActiveIcon))
         TraySetIcon(ActiveIcon), CurIcon := "a"
+    if Waiting {
+        A_IconTip := "W365 Pulse - waiting for a session window`nRe-checking every 5 minutes"
+        return
+    }
     hwnd := GetTargetHwnd()
     tgt  := hwnd ? WinGetTitle("ahk_id " hwnd) : "no window found"
     ago  := LastPulse ? Round((A_TickCount - LastPulse) / 60000, 1) " min ago" : "pending"
@@ -176,23 +197,27 @@ UpdateTip() {
 
 ; ---- Menu handlers ---------------------------------------------------------
 MenuTogglePause(*) {
-    global Paused, LastPulse, Cfg
+    global Paused, LastPulse, Cfg, Waiting, NextWindowCheck
     Paused := !Paused
     Cfg["Enabled"] := Paused ? 0 : 1
     SaveConfig()
-    if !Paused
+    if !Paused {
         LastPulse := 0          ; resume -> pulse on next idle gap
+        Waiting := false        ; and re-check for the window right away
+        NextWindowCheck := 0
+    }
     Log(Paused ? "Paused" : "Resumed")
     RefreshChecks()
     UpdateTip()
 }
 
 SetInterval(mins, *) {
-    global Cfg, LastPulse
+    global Cfg, LastPulse, NextWindowCheck
     Cfg["IntervalMin"] := mins
     Cfg["MaxMin"]      := Min(mins + 2, 14)
     SaveConfig()
     LastPulse := 0
+    NextWindowCheck := 0
     Log("Interval set to " mins "m (ceiling " Cfg["MaxMin"] "m)")
     RefreshChecks()
 }
@@ -209,6 +234,92 @@ Redetect() {
 MenuToggleStartup(*) {
     SetStartup(!StartupRegistered())
     RefreshChecks()
+}
+
+; ---- Dependency / environment check ----------------------------------------
+; Returns true if everything needed is present. On startup it only pops up when
+; something is genuinely missing; the tray "Check environment" item passes
+; verbose:=true to always show a full status report.
+CheckEnvironment(verbose := false) {
+    global Cfg
+    lines := [], missing := []
+
+    ; 1. AutoHotkey v2 (guaranteed when run as a script, but report it)
+    ahkOk := (SubStr(A_AhkVersion, 1, 1) = "2")
+    lines.Push((ahkOk ? "[ OK ]  " : "[MISSING]  ") "AutoHotkey v2   (running " A_AhkVersion ")")
+    if !ahkOk
+        missing.Push("AutoHotkey v2`n        Download: https://www.autohotkey.com/")
+
+    ; 2. A Windows 365 / Remote Desktop client we can keep alive
+    pref := PreferredClient()
+    if (pref != "")
+        lines.Push("[ OK ]  Windows 365 / Remote Desktop client`n             " pref)
+    else if (Cfg["TargetExe"] != "" && ProcessExist(Cfg["TargetExe"]))
+        lines.Push("[ OK ]  Configured target is running:  " Cfg["TargetExe"])
+    else if GetTargetHwnd()
+        lines.Push("[ OK ]  A session window is currently open")
+    else {
+        lines.Push("[MISSING]  No Windows 365 client or session window detected")
+        note := (MstscPath() != "")
+            ? "`n        (Classic Remote Desktop 'mstsc.exe' is present, but Windows 365`n         normally uses the Windows App or the browser.)"
+            : ""
+        missing.Push("A Windows 365 session to keep alive. Either:`n"
+            . "        - Install the Windows App:  https://aka.ms/windowsapp`n"
+            . "        - Or use the browser:  https://windows.cloud.microsoft`n"
+            . "          then open your Cloud PC and choose that window in`n"
+            . "          Settings > Target window." note)
+    }
+
+    for ln in lines
+        Log("Env: " StrReplace(StrReplace(ln, "`n", " "), "  ", " "))
+
+    if missing.Length {
+        msg := "W365 Pulse checked its prerequisites and something is missing:`n`n"
+        for m in missing
+            msg .= "  -  " m "`n`n"
+        msg .= "The app will keep running and start working as soon as the`nrequirement is met (use 'Re-detect window' once your session is open)."
+        MsgBox(msg, "W365 Pulse - missing prerequisites", 0x30)
+        return false
+    }
+
+    if verbose {
+        report := ""
+        for ln in lines
+            report .= ln "`n`n"
+        report .= "Everything needed is in place."
+        MsgBox(report, "W365 Pulse - Environment check", 0x40)
+    }
+    return true
+}
+
+PreferredClient() {
+    ; running W365 / RDP client process?
+    for exe in ["msrdc.exe", "Windows365.exe"]
+        if ProcessExist(exe)
+            return exe "  (running)"
+    ; installed on disk?
+    for v in ["ProgramW6432", "ProgramFiles", "ProgramFiles(x86)", "LocalAppData"] {
+        base := EnvGet(v)
+        if (base = "")
+            continue
+        for sub in ["\Remote Desktop\msrdc.exe", "\Microsoft\Remote Desktop\msrdc.exe"]
+            if FileExist(base sub)
+                return base sub
+    }
+    ; new Windows App (MSIX) registered via App Paths
+    for root in ["HKLM", "HKCU"] {
+        try {
+            val := RegRead(root "\Software\Microsoft\Windows\CurrentVersion\App Paths\msrdc.exe")
+            if (val != "")
+                return val
+        }
+    }
+    return ""
+}
+
+MstscPath() {
+    p := A_WinDir "\System32\mstsc.exe"
+    return FileExist(p) ? p : ""
 }
 
 SendKeepAlive(k) {
@@ -312,7 +423,7 @@ ShowSettings(*) {
     }
 
     SaveBtn(*) {
-        global Cfg, Paused, KeyVals, LastPulse
+        global Cfg, Paused, KeyVals, LastPulse, NextWindowCheck
         iv  := uInterval.Value
         mx  := uMax.Value
         idl := uIdle.Value
@@ -342,6 +453,7 @@ ShowSettings(*) {
         SaveConfig()
         SetStartup(cbStartup.Value)
         LastPulse := 0
+        NextWindowCheck := 0
         RefreshChecks()
         UpdateTip()
         Log("Settings saved (interval " iv "m, ceiling " mx "m, idle " idl "s, key " Cfg["Key"] ", target " (Cfg["TargetExe"] = "" ? "auto" : Cfg["TargetExe"]) ")")
