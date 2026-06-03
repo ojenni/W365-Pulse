@@ -1,0 +1,12 @@
+# Compiled AutoHotkey output (build artifact; recompile from W365Pulse.ahk)
+*.exe
+
+# Runtime files (these live in %APPDATA%\W365Pulse, but ignore if copied locally)
+config.ini
+*.log
+
+# Windows / OneDrive cruft
+Thumbs.db
+ehthumbs.db
+desktop.ini
+$RECYCLE.BIN/
