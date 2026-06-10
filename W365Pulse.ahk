@@ -4,12 +4,12 @@ Persistent
 SetTitleMatchMode(2)            ; window title = "contains"
 
 ; ============================================================================
-;  W365 Pulse v1.2.1 - keeps a Windows 365 / Remote Desktop session from
-;  logging out by sending a no-op keystroke directly to the session window
-;  (ControlSend, no focus steal). Designed for a setup where the Cloud PC
-;  window lives on a dedicated screen, always visible.
+;  W365 Pulse v1.3.0 - keeps a Windows 365 / Remote Desktop session from
+;  logging out by briefly activating the session window (AttachThreadInput to
+;  bypass Windows foreground-lock) and sending a no-op key over the connection.
+;  Designed for a setup where the Cloud PC window lives on a dedicated screen.
 ; ============================================================================
-AppVersion := "1.2.1"
+AppVersion := "1.3.0"
 
 ; ---- Paths -----------------------------------------------------------------
 ConfigDir  := A_AppData "\W365Pulse"
@@ -23,8 +23,8 @@ if !DirExist(ConfigDir)
 
 ; ---- Config (defaults, then overridden by config.ini) ----------------------
 Cfg := Map(
-    "IntervalMin", 12,          ; soft target: pulse roughly this often, on an idle gap
-    "MaxMin",      14,          ; hard ceiling: pulse even if you're actively typing (< 15)
+    "IntervalMin", 8,           ; soft target: pulse roughly this often, on an idle gap
+    "MaxMin",      9,           ; hard ceiling: pulse even if you're actively typing (< 15)
     "IdleSec",     4,           ; only pulse after this many seconds of no physical input
     "TargetExe",   "",          ; empty = auto-detect among the known clients below
     "TargetTitle", "",          ; optional title filter to disambiguate multiple windows
@@ -42,7 +42,7 @@ Waiting   := false              ; true while no W365 session window is present
 NextWindowCheck := 0            ; A_TickCount gate for the 5-minute re-check while waiting
 
 BuildTray()
-SetTimer(Tick, 20000)           ; evaluate every 20s
+SetTimer(Tick, 5000)            ; evaluate every 5s (tight ceiling precision)
 Tick()                          ; and once right now
 Log("Started v" AppVersion " (interval " Cfg["IntervalMin"] "m, ceiling " Cfg["MaxMin"] "m, idle gate " Cfg["IdleSec"] "s)")
 CheckEnvironment()              ; warn at startup only if a prerequisite is missing
@@ -88,12 +88,34 @@ DoPulse(manual) {
             TrayTip("W365 Pulse", "No Cloud PC window found.`nOpen your session, then use Re-detect window.", 0x10)
         return false
     }
-    ok := false
+    ok   := false
+    prev := WinExist("A")
     try {
-        SendKeepAlive(Cfg["Key"], hwnd)
-        ok := true
+        if (Cfg["Key"] = "{MouseNudge}") {
+            WinGetPos(&wx, &wy, &ww, &wh, "ahk_id " hwnd)
+            MouseGetPos(&origX, &origY)
+            cx := wx + ww // 2
+            cy := wy + wh // 2
+            MouseMove(cx, cy, 0)
+            MouseMove(cx + 3, cy, 0)
+            MouseMove(cx, cy, 0)
+            MouseMove(origX, origY, 0)
+            ok := true
+        } else {
+            ForceActivate(hwnd)
+            if WinWaitActive("ahk_id " hwnd, , 1) {
+                Send(Cfg["Key"])
+                Sleep(100)
+                ok := true
+            } else {
+                Log("Activate failed")
+            }
+        }
     } catch as e {
         Log("Pulse error: " e.Message)
+    } finally {
+        if (prev && Cfg["Key"] != "{MouseNudge}")
+            try WinActivate("ahk_id " prev)
     }
     LastPulse := A_TickCount          ; always advance, so we don't spam on error
     if ok {
@@ -103,6 +125,20 @@ DoPulse(manual) {
     }
     UpdateTip()
     return ok
+}
+
+; Bypass Windows foreground-lock by attaching our thread's input state to the
+; target window's thread before calling SetForegroundWindow. Without this,
+; Windows silently ignores SetForegroundWindow while another window has focus.
+ForceActivate(hwnd) {
+    thisThread   := DllCall("GetCurrentThreadId")
+    targetThread := DllCall("GetWindowThreadProcessId", "ptr", hwnd, "uint*", &pid := 0, "uint")
+    if (thisThread != targetThread)
+        DllCall("AttachThreadInput", "uint", thisThread, "uint", targetThread, "int", true)
+    DllCall("SetForegroundWindow", "ptr", hwnd)
+    WinActivate("ahk_id " hwnd)
+    if (thisThread != targetThread)
+        DllCall("AttachThreadInput", "uint", thisThread, "uint", targetThread, "int", false)
 }
 
 GetTargetHwnd() {
@@ -328,25 +364,6 @@ MstscPath() {
     return FileExist(p) ? p : ""
 }
 
-; ControlSend posts keystrokes directly to the window's message queue without
-; needing focus — RDP/W365 clients forward these to the remote session, which
-; resets the host's idle timer. This avoids the foreground-lock problem where
-; WinActivate is blocked while the user types on another monitor.
-SendKeepAlive(k, hwnd) {
-    if (k = "{MouseNudge}") {
-        WinGetPos(&wx, &wy, &ww, &wh, "ahk_id " hwnd)
-        MouseGetPos(&origX, &origY)
-        cx := wx + ww // 2
-        cy := wy + wh // 2
-        MouseMove(cx, cy, 0)
-        MouseMove(cx + 3, cy, 0)
-        MouseMove(cx, cy, 0)
-        MouseMove(origX, origY, 0)
-    } else {
-        ControlSend(k, , "ahk_id " hwnd)
-    }
-}
-
 ; ---- Settings GUI ----------------------------------------------------------
 ShowSettings(*) {
     global Cfg, Paused, KeyVals, KeyLabels
@@ -430,8 +447,8 @@ ShowSettings(*) {
     }
 
     ResetDefaults(*) {
-        uInterval.Value := 12
-        uMax.Value      := 14
+        uInterval.Value := 8
+        uMax.Value      := 9
         uIdle.Value     := 4
         ddlKey.Choose(1)
         ddlWin.Choose(1)
