@@ -4,12 +4,12 @@ Persistent
 SetTitleMatchMode(2)            ; window title = "contains"
 
 ; ============================================================================
-;  W365 Pulse v1.2.0 - keeps a Windows 365 / Remote Desktop session from
+;  W365 Pulse v1.2.1 - keeps a Windows 365 / Remote Desktop session from
 ;  logging out by sending a no-op keystroke directly to the session window
 ;  (ControlSend, no focus steal). Designed for a setup where the Cloud PC
 ;  window lives on a dedicated screen, always visible.
 ; ============================================================================
-AppVersion := "1.2.0"
+AppVersion := "1.2.1"
 
 ; ---- Paths -----------------------------------------------------------------
 ConfigDir  := A_AppData "\W365Pulse"
@@ -123,8 +123,7 @@ BuildTray() {
     global ActiveIcon
     tray := A_TrayMenu
     tray.Delete()
-    tray.Add("W365 Pulse", (*) => "")
-    tray.Disable("W365 Pulse")
+    tray.Add("W365 Pulse", ShowAbout)
     tray.Add()
     tray.Add("Active", MenuTogglePause)
     tray.Add("Pulse now", (*) => DoPulse(true))
@@ -222,6 +221,20 @@ Redetect() {
     else
         TrayTip("W365 Pulse", "No Cloud PC window found.`nOpen the session, or set TargetExe in settings.", 0x10)
     UpdateTip()
+}
+
+ShowAbout(*) {
+    global AppVersion
+    MsgBox(
+        "W365 Pulse  v" AppVersion "`n`n"
+        . "Keeps a Windows 365 / Remote Desktop session alive by sending a "
+        . "harmless keystroke to the session window at regular intervals, "
+        . "preventing the host from logging you out due to inactivity.`n`n"
+        . "The keystroke is sent directly to the background window "
+        . "(no focus stealing) so your work on other monitors is never interrupted.`n`n"
+        . "Right-click the tray icon to configure the pulse interval, "
+        . "target window, and keep-alive signal.",
+        "About W365 Pulse", 0x40)
 }
 
 MenuToggleStartup(*) {
