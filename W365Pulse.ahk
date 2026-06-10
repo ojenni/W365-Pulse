@@ -4,18 +4,20 @@ Persistent
 SetTitleMatchMode(2)            ; window title = "contains"
 
 ; ============================================================================
-;  W365 Pulse - keeps a Windows 365 / Remote Desktop session from logging out
-;  by briefly focusing its window during an idle gap and sending a no-op key
-;  (F15) over the connection, which resets the host's idle timer. Designed for
-;  a setup where the Cloud PC window lives on a dedicated screen, always visible.
+;  W365 Pulse v1.2.0 - keeps a Windows 365 / Remote Desktop session from
+;  logging out by sending a no-op keystroke directly to the session window
+;  (ControlSend, no focus steal). Designed for a setup where the Cloud PC
+;  window lives on a dedicated screen, always visible.
 ; ============================================================================
+AppVersion := "1.2.0"
 
 ; ---- Paths -----------------------------------------------------------------
 ConfigDir  := A_AppData "\W365Pulse"
 ConfigFile := ConfigDir "\config.ini"
 LogFile    := ConfigDir "\w365pulse.log"
-ActiveIcon := A_ScriptDir "\W365Pulse.ico"
-PausedIcon := A_ScriptDir "\W365Pulse_paused.ico"
+ActiveIcon  := A_ScriptDir "\W365Pulse.ico"
+PausedIcon  := A_ScriptDir "\W365Pulse_paused.ico"
+WaitingIcon := A_ScriptDir "\W365Pulse_waiting.ico"
 if !DirExist(ConfigDir)
     DirCreate(ConfigDir)
 
@@ -42,7 +44,7 @@ NextWindowCheck := 0            ; A_TickCount gate for the 5-minute re-check whi
 BuildTray()
 SetTimer(Tick, 20000)           ; evaluate every 20s
 Tick()                          ; and once right now
-Log("Started (interval " Cfg["IntervalMin"] "m, ceiling " Cfg["MaxMin"] "m, idle gate " Cfg["IdleSec"] "s)")
+Log("Started v" AppVersion " (interval " Cfg["IntervalMin"] "m, ceiling " Cfg["MaxMin"] "m, idle gate " Cfg["IdleSec"] "s)")
 CheckEnvironment()              ; warn at startup only if a prerequisite is missing
 
 ; ============================================================================
@@ -86,33 +88,21 @@ DoPulse(manual) {
             TrayTip("W365 Pulse", "No Cloud PC window found.`nOpen your session, then use Re-detect window.", 0x10)
         return false
     }
-    prev   := WinExist("A")
-    minmax := WinGetMinMax("ahk_id " hwnd)      ; -1 = minimized
+    ok := false
     try {
-        if (minmax = -1)
-            WinRestore("ahk_id " hwnd)
-        WinActivate("ahk_id " hwnd)
-        if !WinWaitActive("ahk_id " hwnd, , 2) {
-            Log("Activate timed out")
-            return false
-        }
-        SendKeepAlive(Cfg["Key"])
-        Sleep(150)
+        SendKeepAlive(Cfg["Key"], hwnd)
+        ok := true
     } catch as e {
         Log("Pulse error: " e.Message)
-        return false
-    } finally {
-        if (minmax = -1)                         ; leave it as we found it
-            WinMinimize("ahk_id " hwnd)
-        else if prev
-            try WinActivate("ahk_id " prev)      ; hand focus back to your work
     }
-    LastPulse := A_TickCount
-    Log("Pulse -> " WinGetTitle("ahk_id " hwnd))
-    if (manual || Cfg["Notify"])
-        TrayTip("W365 Pulse", "Keep-alive sent.", 0x1)
+    LastPulse := A_TickCount          ; always advance, so we don't spam on error
+    if ok {
+        Log("Pulse -> " WinGetTitle("ahk_id " hwnd))
+        if (manual || Cfg["Notify"])
+            TrayTip("W365 Pulse", "Keep-alive sent.", 0x1)
+    }
     UpdateTip()
-    return true
+    return ok
 }
 
 GetTargetHwnd() {
@@ -174,21 +164,24 @@ RefreshChecks() {
 }
 
 UpdateTip() {
-    global Paused, LastPulse, ActiveIcon, PausedIcon, Waiting
+    global Paused, LastPulse, ActiveIcon, PausedIcon, WaitingIcon, Waiting
     static CurIcon := ""
     if Paused {
         A_IconTip := "W365 Pulse - Paused"
-        if (CurIcon != "p" && FileExist(PausedIcon)) {
+        if (CurIcon != "p" && FileExist(PausedIcon))
             TraySetIcon(PausedIcon), CurIcon := "p"
+        return
+    }
+    if Waiting {
+        A_IconTip := "W365 Pulse - waiting for a session window`nRe-checking every 5 minutes"
+        if (CurIcon != "w") {
+            ico := FileExist(WaitingIcon) ? WaitingIcon : PausedIcon
+            TraySetIcon(ico), CurIcon := "w"
         }
         return
     }
     if (CurIcon != "a" && FileExist(ActiveIcon))
         TraySetIcon(ActiveIcon), CurIcon := "a"
-    if Waiting {
-        A_IconTip := "W365 Pulse - waiting for a session window`nRe-checking every 5 minutes"
-        return
-    }
     hwnd := GetTargetHwnd()
     tgt  := hwnd ? WinGetTitle("ahk_id " hwnd) : "no window found"
     ago  := LastPulse ? Round((A_TickCount - LastPulse) / 60000, 1) " min ago" : "pending"
@@ -322,12 +315,22 @@ MstscPath() {
     return FileExist(p) ? p : ""
 }
 
-SendKeepAlive(k) {
+; ControlSend posts keystrokes directly to the window's message queue without
+; needing focus — RDP/W365 clients forward these to the remote session, which
+; resets the host's idle timer. This avoids the foreground-lock problem where
+; WinActivate is blocked while the user types on another monitor.
+SendKeepAlive(k, hwnd) {
     if (k = "{MouseNudge}") {
-        MouseMove(3, 0, 0, "R")
-        MouseMove(-3, 0, 0, "R")
+        WinGetPos(&wx, &wy, &ww, &wh, "ahk_id " hwnd)
+        MouseGetPos(&origX, &origY)
+        cx := wx + ww // 2
+        cy := wy + wh // 2
+        MouseMove(cx, cy, 0)
+        MouseMove(cx + 3, cy, 0)
+        MouseMove(cx, cy, 0)
+        MouseMove(origX, origY, 0)
     } else {
-        Send(k)
+        ControlSend(k, , "ahk_id " hwnd)
     }
 }
 
@@ -344,7 +347,7 @@ ShowSettings(*) {
 
     choices := ListOpenWindows()           ; array of Map("text","exe","title")
 
-    G := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "W365 Pulse - Settings")
+    G := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox", "W365 Pulse v" AppVersion " - Settings")
     G.BackColor := "FFFFFF"
     G.SetFont("s10", "Segoe UI")
 
