@@ -18,8 +18,10 @@ laptop display), always visible, while you work on other monitors.
   protection), sends the key, then hands focus straight back to whatever you were doing.
 - It only pulses during a **physical idle gap** (`A_TimeIdlePhysical`), so it never
   interrupts your typing. `A_TimeIdlePhysical` ignores the synthetic key it sends.
-- A **hard ceiling** (default 9 min, under a typical 10-min lock policy) forces a pulse
-  even if you never pause — because your work on other monitors sends no input to the VM.
+- A **hard ceiling** (default 9 min, kept below the configured *VM locks after* minutes —
+  see Settings below) forces a pulse even if you never pause — because your work on other
+  monitors sends no input to the VM. Different Cloud PCs can have different lock/timeout
+  policies, so this is configurable rather than assumed.
 - If **no session window is open**, it doesn't busy-poll: it enters a *waiting* state
   (amber tray icon) and re-checks every **5 minutes**, then resumes the instant your
   Cloud PC window reappears.
@@ -104,9 +106,10 @@ Right-click the tray icon and choose **Settings...**. Everything is set with
 spinners, dropdowns and checkboxes — no text files to mis-edit, and values are
 validated on save:
 
-- **Timing** – pulse interval, hard ceiling (must be > interval and < 15), the idle-gap
-  that prevents interrupting your typing, and the give-up threshold (see *Battery / sleep
-  behavior* above).
+- **Timing** – your VM's own lock/timeout (default 15 min — check what your specific
+  Cloud PC actually uses, since this varies), pulse interval, hard ceiling (must be >
+  interval and < the VM timeout), the idle-gap that prevents interrupting your typing,
+  and the give-up threshold (see *Battery / sleep behavior* above).
 - **Target window** – pick your Cloud PC from a dropdown of currently open windows
   (with a *Refresh list* button), or leave it on **Auto-detect**.
 - **Keep-alive signal** – F15 (default) / F14 / F13 / Shift tap / Mouse nudge.
