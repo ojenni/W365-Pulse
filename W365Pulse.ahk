@@ -11,7 +11,7 @@ SetTitleMatchMode(2)            ; window title = "contains"
 ;  Stands down after prolonged real inactivity so the laptop can sleep normally
 ;  instead of running on battery forever.
 ; ============================================================================
-AppVersion := "1.5.0"
+AppVersion := "1.5.1"
 
 ; ---- Paths -----------------------------------------------------------------
 ConfigDir  := A_AppData "\W365Pulse"
@@ -421,7 +421,7 @@ ShowSettings(*) {
     G.Add("Text", "x32 y96 w122 +0x200", "VM locks after")
     G.Add("Edit", "x158 y93 w56")
     uVmTimeout := G.Add("UpDown", "Range3-120", Cfg["VmTimeoutMin"])
-    G.Add("Text", "x222 y96 w224 +0x200", "minutes (this Cloud PC's own timeout)")
+    G.Add("Text", "x222 y96 w224 +0x200", "minutes (your VM's timeout)")
     G.Add("Text", "x32 y128 w122 +0x200", "Pulse every")
     G.Add("Edit", "x158 y125 w56")
     uInterval := G.Add("UpDown", "Range5-13", Cfg["IntervalMin"])
@@ -429,15 +429,15 @@ ShowSettings(*) {
     G.Add("Text", "x32 y160 w122 +0x200", "Force a pulse by")
     G.Add("Edit", "x158 y157 w56")
     uMax := G.Add("UpDown", "Range6-119", Cfg["MaxMin"])
-    G.Add("Text", "x222 y160 w224 +0x200", "minutes (hard ceiling, must be < VM timeout)")
+    G.Add("Text", "x222 y160 w224 +0x200", "minutes (hard ceiling)")
     G.Add("Text", "x32 y192 w122 +0x200", "Only when idle for")
     G.Add("Edit", "x158 y189 w56")
     uIdle := G.Add("UpDown", "Range1-60", Cfg["IdleSec"])
-    G.Add("Text", "x222 y192 w224 +0x200", "seconds (avoids interrupting typing)")
+    G.Add("Text", "x222 y192 w224 +0x200", "seconds (idle gap)")
     G.Add("Text", "x32 y224 w122 +0x200", "Give up after")
     G.Add("Edit", "x158 y221 w56")
     uGiveUp := G.Add("UpDown", "Range5-120", Cfg["GiveUpMin"])
-    G.Add("Text", "x222 y224 w224 +0x200", "min of no input (lets the laptop sleep)")
+    G.Add("Text", "x222 y224 w224 +0x200", "minutes (allow sleep)")
 
     ; --- Target window ---
     G.Add("GroupBox", "x16 y268 w438 h86", "Target window")
