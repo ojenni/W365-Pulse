@@ -25,6 +25,11 @@ laptop display), always visible, while you work on other monitors.
 - If **no session window is open**, it doesn't busy-poll: it enters a *waiting* state
   (amber tray icon) and re-checks every **5 minutes**, then resumes the instant your
   Cloud PC window reappears.
+- It distinguishes the client being merely **open on its launcher/device-list screen**
+  from an **actual connected VM session** — a generic window titled "Windows App",
+  "Windows 365", "Devices", etc. doesn't count as a session, so it won't waste a pulse on
+  it; it waits the same as if the client weren't running at all, until a real session
+  window (titled after your Cloud PC / pool name) appears.
 - If you've been **genuinely away from the keyboard** for longer than the *give-up*
   threshold (default 20 min), it stops pulsing entirely until you touch the keyboard or
   mouse again. See **Battery / sleep behavior** below for why this matters.

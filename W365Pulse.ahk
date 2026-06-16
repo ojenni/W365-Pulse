@@ -4,14 +4,16 @@ Persistent
 SetTitleMatchMode(2)            ; window title = "contains"
 
 ; ============================================================================
-;  W365 Pulse v1.5.0 - keeps a Windows 365 / Remote Desktop session from
+;  W365 Pulse v2.0.0 - keeps a Windows 365 / Remote Desktop session from
 ;  logging out by briefly activating the session window (AttachThreadInput to
 ;  bypass Windows foreground-lock) and sending a no-op key over the connection.
 ;  Designed for a setup where the Cloud PC window lives on a dedicated screen.
-;  Stands down after prolonged real inactivity so the laptop can sleep normally
-;  instead of running on battery forever.
+;  Only pulses when an actual VM session is connected - not when the client is
+;  merely open on its launcher screen - and stands down after prolonged real
+;  inactivity so the laptop can sleep normally instead of running on battery
+;  forever.
 ; ============================================================================
-AppVersion := "1.5.1"
+AppVersion := "2.0.0"
 
 ; ---- Paths -----------------------------------------------------------------
 ConfigDir  := A_AppData "\W365Pulse"
@@ -36,6 +38,10 @@ Cfg := Map(
     "Enabled",     1,
     "Notify",      0)           ; 1 = show a tray balloon on every pulse
 KnownExes := ["msrdc.exe", "Windows365.exe", "mstsc.exe"]
+; Generic window titles the client shows when it's open but NOT connected to a
+; VM (its home/launcher/device-list screen). A window with one of these exact
+; titles isn't a session worth pulsing into - the app should wait instead.
+NonSessionTitles := ["Windows App", "Windows 365", "Microsoft Remote Desktop", "Devices", "Connection Center"]
 KeyVals   := ["{F15}", "{F14}", "{F13}", "{Shift}", "{MouseNudge}"]
 KeyLabels := ["F15 - invisible (recommended)", "F14", "F13", "Shift tap", "Mouse nudge"]
 
@@ -165,15 +171,39 @@ ForceActivate(hwnd) {
         DllCall("AttachThreadInput", "uint", thisThread, "uint", targetThread, "int", false)
 }
 
+; Finds a window that represents an actual running VM session - not just the
+; client app sitting open on its home/device-list screen with no VM connected.
+; If you've set an explicit TargetTitle, that's trusted as-is (you know better).
+; Otherwise, every visible window of the known client exes is checked and any
+; with a generic launcher title (NonSessionTitles) is skipped.
 GetTargetHwnd() {
-    global Cfg, KnownExes
+    global Cfg, KnownExes, NonSessionTitles
     list := (Cfg["TargetExe"] != "") ? [Cfg["TargetExe"]] : KnownExes
     for exe in list {
-        crit := (Cfg["TargetTitle"] != "") ? (Cfg["TargetTitle"] " ahk_exe " exe) : ("ahk_exe " exe)
-        if (id := WinExist(crit))
+        if (Cfg["TargetTitle"] != "") {
+            if (id := WinExist(Cfg["TargetTitle"] " ahk_exe " exe))
+                return id
+            continue
+        }
+        for id in WinGetList("ahk_exe " exe) {
+            if !DllCall("IsWindowVisible", "ptr", id)
+                continue
+            title := ""
+            try title := WinGetTitle("ahk_id " id)
+            if (title = "" || IsLauncherTitle(title))
+                continue
             return id
+        }
     }
     return 0
+}
+
+IsLauncherTitle(title) {
+    global NonSessionTitles
+    for t in NonSessionTitles
+        if (title = t)
+            return true
+    return false
 }
 
 ; ============================================================================
