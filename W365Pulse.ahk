@@ -4,12 +4,14 @@ Persistent
 SetTitleMatchMode(2)            ; window title = "contains"
 
 ; ============================================================================
-;  W365 Pulse v1.3.0 - keeps a Windows 365 / Remote Desktop session from
+;  W365 Pulse v1.4.0 - keeps a Windows 365 / Remote Desktop session from
 ;  logging out by briefly activating the session window (AttachThreadInput to
 ;  bypass Windows foreground-lock) and sending a no-op key over the connection.
 ;  Designed for a setup where the Cloud PC window lives on a dedicated screen.
+;  Stands down after prolonged real inactivity so the laptop can sleep normally
+;  instead of running on battery forever.
 ; ============================================================================
-AppVersion := "1.3.0"
+AppVersion := "1.4.0"
 
 ; ---- Paths -----------------------------------------------------------------
 ConfigDir  := A_AppData "\W365Pulse"
@@ -26,6 +28,7 @@ Cfg := Map(
     "IntervalMin", 8,           ; soft target: pulse roughly this often, on an idle gap
     "MaxMin",      9,           ; hard ceiling: pulse even if you're actively typing (< 15)
     "IdleSec",     4,           ; only pulse after this many seconds of no physical input
+    "GiveUpMin",   20,          ; stop pulsing after this much real inactivity (lets sleep happen)
     "TargetExe",   "",          ; empty = auto-detect among the known clients below
     "TargetTitle", "",          ; optional title filter to disambiguate multiple windows
     "Key",         "{F15}",     ; harmless key sent into the session
@@ -40,6 +43,7 @@ Paused   := !Cfg["Enabled"]
 LastPulse := 0                  ; A_TickCount of last successful pulse (0 = pulse soon)
 Waiting   := false              ; true while no W365 session window is present
 NextWindowCheck := 0            ; A_TickCount gate for the 5-minute re-check while waiting
+StandingDown := false           ; true once real inactivity exceeds GiveUpMin
 
 BuildTray()
 SetTimer(Tick, 5000)            ; evaluate every 5s (tight ceiling precision)
@@ -51,10 +55,29 @@ CheckEnvironment()              ; warn at startup only if a prerequisite is miss
 ;  Core loop
 ; ============================================================================
 Tick(*) {
-    global LastPulse, Cfg, Paused, Waiting, NextWindowCheck
+    global LastPulse, Cfg, Paused, Waiting, NextWindowCheck, StandingDown
     UpdateTip()
     if Paused
         return
+    ; If you've been truly away (no real keyboard/mouse input) for a while,
+    ; stop pulsing: let the Cloud PC's own policy lock/disconnect, and let
+    ; Windows' normal sleep timer finally run out instead of being reset by
+    ; our own synthetic input every few minutes. Resumes instantly on input.
+    if (A_TimeIdlePhysical >= Cfg["GiveUpMin"] * 60000) {
+        if !StandingDown {
+            Log("No input for " Cfg["GiveUpMin"] " min - standing down so the system can sleep normally")
+            StandingDown := true
+            UpdateTip()
+        }
+        return
+    }
+    if StandingDown {
+        Log("Input detected - resuming keep-alive")
+        StandingDown := false
+        LastPulse := 0
+        Waiting := false
+        NextWindowCheck := 0
+    }
     elapsed := A_TickCount - LastPulse
     if (elapsed < Cfg["IntervalMin"] * 60000)
         return
@@ -199,12 +222,19 @@ RefreshChecks() {
 }
 
 UpdateTip() {
-    global Paused, LastPulse, ActiveIcon, PausedIcon, WaitingIcon, Waiting
+    global Paused, LastPulse, ActiveIcon, PausedIcon, WaitingIcon, Waiting, StandingDown
     static CurIcon := ""
     if Paused {
         A_IconTip := "W365 Pulse - Paused"
         if (CurIcon != "p" && FileExist(PausedIcon))
             TraySetIcon(PausedIcon), CurIcon := "p"
+        return
+    }
+    if StandingDown {
+        mins := Round(A_TimeIdlePhysical / 60000)
+        A_IconTip := "W365 Pulse - standing down (idle " mins " min)`nLetting the system sleep normally - resumes on input"
+        if (CurIcon != "s" && FileExist(PausedIcon))
+            TraySetIcon(PausedIcon), CurIcon := "s"
         return
     }
     if Waiting {
@@ -225,7 +255,7 @@ UpdateTip() {
 
 ; ---- Menu handlers ---------------------------------------------------------
 MenuTogglePause(*) {
-    global Paused, LastPulse, Cfg, Waiting, NextWindowCheck
+    global Paused, LastPulse, Cfg, Waiting, NextWindowCheck, StandingDown
     Paused := !Paused
     Cfg["Enabled"] := Paused ? 0 : 1
     SaveConfig()
@@ -233,6 +263,7 @@ MenuTogglePause(*) {
         LastPulse := 0          ; resume -> pulse on next idle gap
         Waiting := false        ; and re-check for the window right away
         NextWindowCheck := 0
+        StandingDown := false
     }
     Log(Paused ? "Paused" : "Resumed")
     RefreshChecks()
@@ -385,7 +416,7 @@ ShowSettings(*) {
     hdr.SetFont("s15 Bold", "Segoe UI")
 
     ; --- Timing ---
-    G.Add("GroupBox", "x16 y62 w438 h130", "Timing")
+    G.Add("GroupBox", "x16 y62 w438 h162", "Timing")
     G.Add("Text", "x32 y96 w122 +0x200", "Pulse every")
     G.Add("Edit", "x158 y93 w56")
     uInterval := G.Add("UpDown", "Range5-13", Cfg["IntervalMin"])
@@ -398,38 +429,42 @@ ShowSettings(*) {
     G.Add("Edit", "x158 y157 w56")
     uIdle := G.Add("UpDown", "Range1-60", Cfg["IdleSec"])
     G.Add("Text", "x222 y160 w224 +0x200", "seconds (avoids interrupting typing)")
+    G.Add("Text", "x32 y192 w122 +0x200", "Give up after")
+    G.Add("Edit", "x158 y189 w56")
+    uGiveUp := G.Add("UpDown", "Range5-120", Cfg["GiveUpMin"])
+    G.Add("Text", "x222 y192 w224 +0x200", "min of no input (lets the laptop sleep)")
 
     ; --- Target window ---
-    G.Add("GroupBox", "x16 y204 w438 h86", "Target window")
+    G.Add("GroupBox", "x16 y236 w438 h86", "Target window")
     items := ["Auto-detect (recommended)"]
     for c in choices
         items.Push(c["text"])
-    ddlWin := G.Add("DropDownList", "x32 y234 w322", items)
-    G.Add("Button", "x360 y233 w92 h25", "Refresh list").OnEvent("Click", RefreshList)
-    G.Add("Text", "x32 y265 w414 cGray", "Leave on Auto-detect unless it grabs the wrong window.")
+    ddlWin := G.Add("DropDownList", "x32 y266 w322", items)
+    G.Add("Button", "x360 y265 w92 h25", "Refresh list").OnEvent("Click", RefreshList)
+    G.Add("Text", "x32 y297 w414 cGray", "Leave on Auto-detect unless it grabs the wrong window.")
     ddlWin.Choose(InitialWindowIndex(choices))
 
     ; --- Keep-alive key ---
-    G.Add("GroupBox", "x16 y302 w438 h60", "Keep-alive signal")
-    G.Add("Text", "x32 y333 w120 +0x200", "Send")
-    ddlKey := G.Add("DropDownList", "x158 y330 w200", KeyLabels)
+    G.Add("GroupBox", "x16 y334 w438 h60", "Keep-alive signal")
+    G.Add("Text", "x32 y365 w120 +0x200", "Send")
+    ddlKey := G.Add("DropDownList", "x158 y362 w200", KeyLabels)
     ddlKey.Choose(KeyIndex(Cfg["Key"]))
 
     ; --- Behavior ---
-    G.Add("GroupBox", "x16 y374 w438 h106", "Behavior")
-    cbNotify  := G.Add("Checkbox", "x32 y404 w400" (Cfg["Notify"] ? " Checked" : ""), "Show a notification on each pulse")
-    cbStartup := G.Add("Checkbox", "x32 y430 w400" (StartupRegistered() ? " Checked" : ""), "Start automatically with Windows")
-    cbActive  := G.Add("Checkbox", "x32 y456 w400" (Paused ? "" : " Checked"), "Active (uncheck to pause keep-alive)")
+    G.Add("GroupBox", "x16 y406 w438 h106", "Behavior")
+    cbNotify  := G.Add("Checkbox", "x32 y436 w400" (Cfg["Notify"] ? " Checked" : ""), "Show a notification on each pulse")
+    cbStartup := G.Add("Checkbox", "x32 y462 w400" (StartupRegistered() ? " Checked" : ""), "Start automatically with Windows")
+    cbActive  := G.Add("Checkbox", "x32 y488 w400" (Paused ? "" : " Checked"), "Active (uncheck to pause keep-alive)")
 
     ; --- Buttons ---
-    G.Add("Button", "x16 y494 w92 h30", "Test now").OnEvent("Click", (*) => DoPulse(true))
-    G.Add("Button", "x116 y494 w84 h30", "Reset").OnEvent("Click", ResetDefaults)
-    G.Add("Button", "x286 y494 w78 h30", "Cancel").OnEvent("Click", (*) => CloseGui())
-    G.Add("Button", "x370 y494 w84 h30 Default", "Save").OnEvent("Click", SaveBtn)
+    G.Add("Button", "x16 y526 w92 h30", "Test now").OnEvent("Click", (*) => DoPulse(true))
+    G.Add("Button", "x116 y526 w84 h30", "Reset").OnEvent("Click", ResetDefaults)
+    G.Add("Button", "x286 y526 w78 h30", "Cancel").OnEvent("Click", (*) => CloseGui())
+    G.Add("Button", "x370 y526 w84 h30 Default", "Save").OnEvent("Click", SaveBtn)
 
     G.OnEvent("Close", (*) => CloseGui())
     G.OnEvent("Escape", (*) => CloseGui())
-    G.Show("w470 h538")
+    G.Show("w470 h570")
 
     CloseGui() {
         G.Destroy()
@@ -450,16 +485,18 @@ ShowSettings(*) {
         uInterval.Value := 8
         uMax.Value      := 9
         uIdle.Value     := 4
+        uGiveUp.Value   := 20
         ddlKey.Choose(1)
         ddlWin.Choose(1)
         cbNotify.Value  := 0
     }
 
     SaveBtn(*) {
-        global Cfg, Paused, KeyVals, LastPulse, NextWindowCheck
+        global Cfg, Paused, KeyVals, LastPulse, NextWindowCheck, StandingDown
         iv  := uInterval.Value
         mx  := uMax.Value
         idl := uIdle.Value
+        gu  := uGiveUp.Value
         if (mx <= iv) {
             MsgBox("The hard ceiling must be larger than the pulse interval.", "Check settings", 0x30)
             return
@@ -471,6 +508,7 @@ ShowSettings(*) {
         Cfg["IntervalMin"] := iv
         Cfg["MaxMin"]      := mx
         Cfg["IdleSec"]     := idl
+        Cfg["GiveUpMin"]   := gu
         Cfg["Key"]         := KeyVals[ddlKey.Value]
         Cfg["Notify"]      := cbNotify.Value
         sel := ddlWin.Value
@@ -487,9 +525,10 @@ ShowSettings(*) {
         SetStartup(cbStartup.Value)
         LastPulse := 0
         NextWindowCheck := 0
+        StandingDown := false
         RefreshChecks()
         UpdateTip()
-        Log("Settings saved (interval " iv "m, ceiling " mx "m, idle " idl "s, key " Cfg["Key"] ", target " (Cfg["TargetExe"] = "" ? "auto" : Cfg["TargetExe"]) ")")
+        Log("Settings saved (interval " iv "m, ceiling " mx "m, idle " idl "s, give-up " gu "m, key " Cfg["Key"] ", target " (Cfg["TargetExe"] = "" ? "auto" : Cfg["TargetExe"]) ")")
         CloseGui()
         TrayTip("W365 Pulse", "Settings saved.", 0x1)
     }
@@ -542,7 +581,7 @@ LoadConfig() {
         SaveConfig()
         return
     }
-    for k in ["IntervalMin", "MaxMin", "IdleSec", "Enabled", "Notify"]
+    for k in ["IntervalMin", "MaxMin", "IdleSec", "GiveUpMin", "Enabled", "Notify"]
         Cfg[k] := Integer(IniRead(ConfigFile, "Settings", k, Cfg[k]))
     for k in ["TargetExe", "TargetTitle", "Key"]
         Cfg[k] := IniRead(ConfigFile, "Settings", k, Cfg[k])
