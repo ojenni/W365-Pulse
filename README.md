@@ -74,12 +74,17 @@ still treated as visible. If you do want the laptop to keep running with the lid
 - If you don't need the laptop to be portable while the session runs, simply leaving the
   lid open avoids the question entirely.
 
+## Documentation
+
+- [User Guide](docs/user-guide.md) — installation, settings reference, troubleshooting, FAQ
+- [Technical Reference](docs/technical.md) — state machine, algorithms, config schema, developer notes
+
 ## Run
 Double-click `W365Pulse.ahk`, or:
 ```
 "C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe" "W365Pulse.ahk"
 ```
-It lives in the system tray (teal pulse icon = active, grey = paused). No console window.
+It lives in the system tray — teal pulse = active, amber clock = waiting for a session window, grey = paused or standing down. No console window.
 
 ## Tray menu
 - **Active** – check/uncheck to run or pause the keep-alive
