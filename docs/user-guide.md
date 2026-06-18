@@ -72,6 +72,8 @@ Right-click the tray icon to open the menu:
 
 Right-click the tray icon → **View log...** opens a dedicated window for browsing the log, instead of a raw text file with the newest lines buried at the bottom.
 
+It opens with **By month** already expanded down to **today's day**, so you land directly on what happened today — no scrolling or clicking required. If there's nothing logged yet today, it falls back to today's month, then today's year, then "All entries" if the log doesn't reach that far back at all. **Refresh** re-applies the same "jump to today" behavior using the current date.
+
 The left-hand tree lets you drill down two ways:
 
 - **All entries** — every log line, newest first

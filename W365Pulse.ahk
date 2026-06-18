@@ -642,17 +642,20 @@ ShowLogViewer(*) {
 
     entries := ParseLogEntries()
     groups  := BuildLogGroups(entries)
+    nodeEntries := Map()   ; assigned in BuildAndSelectToday(); declared here so it's
+                            ; a shared closure across OnSelect/RefreshViewer (siblings)
 
     G := Gui("-MinimizeBox -MaximizeBox", "W365 Pulse v" AppVersion " - Log Viewer")
     G.SetFont("s10", "Segoe UI")
 
     TV := G.Add("TreeView", "x10 y10 w280 h480")
-    nodeEntries := PopulateLogTree(TV, entries, groups)
     TV.OnEvent("ItemSelect", OnSelect)
 
     LV := G.Add("ListView", "x300 y10 w560 h480", ["Time", "Message"])
     LV.ModifyCol(1, 140)
     LV.ModifyCol(2, 405)
+
+    BuildAndSelectToday()
 
     G.Add("Button", "x10 y500 w90 h28", "Refresh").OnEvent("Click", RefreshViewer)
     G.Add("Button", "x108 y500 w120 h28", "Open raw file").OnEvent("Click", (*) => Run('notepad.exe "' LogFile '"'))
@@ -661,7 +664,6 @@ ShowLogViewer(*) {
     G.OnEvent("Close", (*) => CloseViewer())
     G.OnEvent("Escape", (*) => CloseViewer())
 
-    DisplayLogEntries(entries.Length ? AllIndices(entries.Length) : [])
     G.Show("w870 h540")
 
     OnSelect(ctrl, item) {
@@ -677,12 +679,29 @@ ShowLogViewer(*) {
         }
     }
 
+    ; Defaults the view to "By month", expanded and selected on today's day
+    ; (falling back to today's month, then today's year, then "All entries"
+    ; if today has no log lines yet).
+    BuildAndSelectToday() {
+        today := FormatTime(, "yyyy-MM-dd")
+        result := PopulateLogTree(TV, entries, groups, SubStr(today, 1, 4), SubStr(today, 6, 2), today)
+        nodeEntries := result["nodeEntries"]
+        target := result["todayDayId"] ? result["todayDayId"]
+            : result["todayMonthId"] ? result["todayMonthId"]
+            : result["todayYearId"] ? result["todayYearId"] : 0
+        if target {
+            TV.Modify(target, "Select Vis")
+            DisplayLogEntries(nodeEntries[target])
+        } else {
+            DisplayLogEntries(entries.Length ? AllIndices(entries.Length) : [])
+        }
+    }
+
     RefreshViewer(*) {
         entries := ParseLogEntries()
         groups  := BuildLogGroups(entries)
         TV.Delete()
-        nodeEntries := PopulateLogTree(TV, entries, groups)
-        DisplayLogEntries(entries.Length ? AllIndices(entries.Length) : [])
+        BuildAndSelectToday()
     }
 
     CloseViewer() {
@@ -764,11 +783,15 @@ BuildLogGroups(entries) {
 ; Builds the TreeView (an "All entries" node, then "By month" Year/Month/Day/Hour,
 ; then "By week" Week/Day/Hour) and returns a Map of TreeView item ID -> array of
 ; entry indices for that node's whole subtree, used to populate the ListView.
-PopulateLogTree(TV, entries, groups) {
+; todayY/todayMo/todayDate (e.g. "2026"/"06"/"2026-06-18") let the caller default
+; the view to today's day under "By month"; todayDayId/todayMonthId/todayYearId
+; in the return value are 0 if no log entries fall on that day/month/year.
+PopulateLogTree(TV, entries, groups, todayY := "", todayMo := "", todayDate := "") {
     nodeEntries := Map()
     byMonth   := groups["byMonth"]
     byWeek    := groups["byWeek"]
     weekRange := groups["weekRange"]
+    todayYearId := 0, todayMonthId := 0, todayDayId := 0
 
     allId := TV.Add("All entries (" entries.Length ")", 0)
     nodeEntries[allId] := AllIndices(entries.Length)
@@ -777,12 +800,18 @@ PopulateLogTree(TV, entries, groups) {
     for y in SortedKeysDesc(byMonth) {
         yEntries := []
         yId := TV.Add(y, rootMonth)
+        if (y = todayY)
+            todayYearId := yId
         for mo in SortedKeysDesc(byMonth[y]) {
             moEntries := []
             moId := TV.Add(FormatTime(y . mo . "01", "MMMM yyyy"), yId)
+            if (y = todayY && mo = todayMo)
+                todayMonthId := moId
             for dateKey in SortedKeysDesc(byMonth[y][mo]) {
                 dEntries := []
                 dId := TV.Add(FormatTime(StrReplace(dateKey, "-", ""), "ddd, MMM d"), moId)
+                if (dateKey = todayDate)
+                    todayDayId := dId
                 for h in SortedKeysDesc(byMonth[y][mo][dateKey]) {
                     idxArr := byMonth[y][mo][dateKey][h]
                     hId := TV.Add(h ":00", dId)
@@ -822,7 +851,8 @@ PopulateLogTree(TV, entries, groups) {
         nodeEntries[wkId] := wkEntries
     }
 
-    return nodeEntries
+    return Map("nodeEntries", nodeEntries, "todayYearId", todayYearId,
+        "todayMonthId", todayMonthId, "todayDayId", todayDayId)
 }
 
 AllIndices(n) {
