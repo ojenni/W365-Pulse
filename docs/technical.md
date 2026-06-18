@@ -87,9 +87,10 @@ These are the exact window titles the client shows on its home/device-list scree
 ```
 1. UpdateTip()
 2. if Paused → return
-3. if A_TimeIdlePhysical ≥ GiveUpMin*60000
+3. onBattery = !IsOnACPower()
+   if onBattery && A_TimeIdlePhysical ≥ GiveUpMin*60000
        → set StandingDown = true, return
-4. if StandingDown (and real input detected)
+4. if StandingDown (and not give-up condition above: real input OR plugged into AC)
        → clear StandingDown, reset LastPulse/Waiting/NextWindowCheck
 5. elapsed = A_TickCount – LastPulse
    if elapsed < IntervalMin*60000 → return
@@ -190,6 +191,23 @@ No focus change is needed — mouse movement goes over the RDP virtual channel r
 2. **Give-up threshold** (`GiveUpMin`): stop pulsing entirely after prolonged real inactivity.
 
 `A_TimeIdlePhysical` is AHK's preferred idle counter because it is explicitly documented to **ignore the script's own synthetic `Send`/`MouseMove` calls**. This is critical: if the give-up logic used the OS sleep timer (which _is_ reset by synthetic input), the app would never let the laptop sleep — it would reset the sleep countdown every pulse and keep the laptop awake indefinitely. `A_TimeIdlePhysical` sidesteps this because it counts only real hardware events.
+
+### AC power gating
+
+The give-up threshold only applies while running on battery — there is no point letting the system sleep to save battery that isn't being drained. `IsOnACPower()` wraps the Win32 `GetSystemPowerStatus` API:
+
+```autohotkey
+IsOnACPower() {
+    buf := Buffer(12, 0)
+    if !DllCall("GetSystemPowerStatus", "Ptr", buf)
+        return true
+    return NumGet(buf, 0, "UChar") != 0   ; ACLineStatus: 0=offline(battery) 1=online(AC) 255=unknown
+}
+```
+
+`SYSTEM_POWER_STATUS.ACLineStatus` is the first byte of the struct: `0` = running on battery, `1` = on AC, `255` = unknown (e.g. some desktops/VMs report this). The function treats both `1` and `255` as "on AC" — defaulting to "never stand down" is the safer failure mode (worst case: keep-alive runs a bit longer than strictly necessary, rather than a desktop machine spuriously losing keep-alive because it has no battery to report).
+
+`Tick()` calls this once per 5-second tick (`onBattery := !IsOnACPower()`) and combines it with the idle check: `giveUp := onBattery && (A_TimeIdlePhysical >= Cfg["GiveUpMin"] * 60000)`. Plugging in while `StandingDown` is true resumes keep-alive on the very next tick, the same as detecting real keyboard/mouse input.
 
 ---
 

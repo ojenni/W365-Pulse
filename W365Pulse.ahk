@@ -4,16 +4,17 @@ Persistent
 SetTitleMatchMode(2)            ; window title = "contains"
 
 ; ============================================================================
-;  W365 Pulse v2.0.0 - keeps a Windows 365 / Remote Desktop session from
+;  W365 Pulse v2.1.0 - keeps a Windows 365 / Remote Desktop session from
 ;  logging out by briefly activating the session window (AttachThreadInput to
 ;  bypass Windows foreground-lock) and sending a no-op key over the connection.
 ;  Designed for a setup where the Cloud PC window lives on a dedicated screen.
 ;  Only pulses when an actual VM session is connected - not when the client is
 ;  merely open on its launcher screen - and stands down after prolonged real
-;  inactivity so the laptop can sleep normally instead of running on battery
-;  forever.
+;  inactivity, but only while running on battery, so the laptop can sleep
+;  normally instead of running until empty; while plugged into AC it keeps
+;  pulsing regardless of idle time, since there's no battery to drain.
 ; ============================================================================
-AppVersion := "2.0.0"
+AppVersion := "2.1.0"
 
 ; ---- Paths -----------------------------------------------------------------
 ConfigDir  := A_AppData "\W365Pulse"
@@ -66,20 +67,24 @@ Tick(*) {
     UpdateTip()
     if Paused
         return
-    ; If you've been truly away (no real keyboard/mouse input) for a while,
-    ; stop pulsing: let the Cloud PC's own policy lock/disconnect, and let
-    ; Windows' normal sleep timer finally run out instead of being reset by
-    ; our own synthetic input every few minutes. Resumes instantly on input.
-    if (A_TimeIdlePhysical >= Cfg["GiveUpMin"] * 60000) {
+    ; If you've been truly away (no real keyboard/mouse input) for a while
+    ; AND running on battery, stop pulsing: let the Cloud PC's own policy
+    ; lock/disconnect, and let Windows' normal sleep timer finally run out
+    ; instead of being reset by our own synthetic input every few minutes.
+    ; While plugged into AC there's no battery to drain, so the give-up
+    ; never kicks in - keep-alive keeps running regardless of idle time.
+    onBattery := !IsOnACPower()
+    giveUp := onBattery && (A_TimeIdlePhysical >= Cfg["GiveUpMin"] * 60000)
+    if giveUp {
         if !StandingDown {
-            Log("No input for " Cfg["GiveUpMin"] " min - standing down so the system can sleep normally")
+            Log("On battery with no input for " Cfg["GiveUpMin"] " min - standing down so the system can sleep normally")
             StandingDown := true
             UpdateTip()
         }
         return
     }
     if StandingDown {
-        Log("Input detected - resuming keep-alive")
+        Log(onBattery ? "Input detected - resuming keep-alive" : "Plugged in - resuming keep-alive")
         StandingDown := false
         LastPulse := 0
         Waiting := false
@@ -155,6 +160,16 @@ DoPulse(manual) {
     }
     UpdateTip()
     return ok
+}
+
+; Returns true if the machine is on AC power (plugged in), false if running
+; on battery. Desktops/unknown report as "online" (true) so the give-up logic
+; never affects a machine with no battery to drain.
+IsOnACPower() {
+    buf := Buffer(12, 0)
+    if !DllCall("GetSystemPowerStatus", "Ptr", buf)
+        return true
+    return NumGet(buf, 0, "UChar") != 0   ; ACLineStatus: 0=offline(battery) 1=online(AC) 255=unknown
 }
 
 ; Bypass Windows foreground-lock by attaching our thread's input state to the
@@ -467,7 +482,7 @@ ShowSettings(*) {
     G.Add("Text", "x32 y224 w122 +0x200", "Give up after")
     G.Add("Edit", "x158 y221 w56")
     uGiveUp := G.Add("UpDown", "Range5-120", Cfg["GiveUpMin"])
-    G.Add("Text", "x222 y224 w224 +0x200", "minutes (allow sleep)")
+    G.Add("Text", "x222 y224 w224 +0x200", "minutes (battery only)")
 
     ; --- Target window ---
     G.Add("GroupBox", "x16 y268 w438 h86", "Target window")

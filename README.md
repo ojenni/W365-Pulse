@@ -42,13 +42,16 @@ after you've genuinely walked away.
 
 To prevent this, W365 Pulse tracks real physical inactivity (`A_TimeIdlePhysical`, which
 ignores its own synthetic input) and **stands down** after the configured *give-up*
-minutes of no real input. While standing down:
+minutes of no real input — **but only while running on battery**. While standing down:
 - It stops sending keystrokes, so Windows' sleep timer is no longer being reset and the
   laptop can sleep on schedule.
 - The Cloud PC session will lock/disconnect per its own policy, same as if the app
   weren't running — there's no way around that while you're genuinely not there.
 - The tray icon/tooltip shows "standing down (idle N min)"; touching the keyboard or
-  mouse resumes keep-alive immediately.
+  mouse, or plugging into AC power, resumes keep-alive immediately.
+
+While plugged into AC power, the give-up never kicks in — there's no battery to drain, so
+keep-alive keeps running regardless of how long you've been idle.
 
 Check your current sleep timeouts with `powercfg /query SCHEME_CURRENT SUB_SLEEP`. If
 sleep is set to "Never" while plugged in, that's a Windows power-plan setting independent

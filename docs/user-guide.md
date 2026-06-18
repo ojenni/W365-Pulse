@@ -82,7 +82,7 @@ All five values interact with each other and are validated on save.
 | **Pulse every** | 8 min | The target pulse interval. The app waits for a natural idle gap of at least *Only when idle for* seconds before pulsing; if that gap never comes, it pulses at the hard ceiling instead. |
 | **Force a pulse by** | 9 min | Hard ceiling. Even if you are actively typing (which sends no input to the Cloud PC), a pulse is forced at this many minutes. Must be larger than *Pulse every* and smaller than *VM locks after*. |
 | **Only when idle for** | 4 sec | Minimum physical idle time before a pulse is allowed. Prevents the app from interrupting your typing — it waits for a natural pause in your keystrokes. |
-| **Give up after** | 20 min | If you have been genuinely away from the keyboard and mouse for this long, the app stops pulsing entirely. This lets the laptop enter sleep mode normally instead of staying awake forever. See *Battery / sleep behavior* below. |
+| **Give up after** | 20 min | If you have been genuinely away from the keyboard and mouse for this long **while running on battery**, the app stops pulsing entirely. This lets the laptop enter sleep mode normally instead of running until the battery is empty. Does not apply while plugged into AC power — see *Battery / sleep behavior* below. |
 
 ### Target window
 
@@ -125,9 +125,11 @@ Leave on **Auto-detect (recommended)** unless you need to override it.
 
 W365 Pulse sends synthetic keystrokes, which reset Windows' own idle-sleep timer — the same timer that normally puts the laptop to sleep after N minutes on battery. Without a cutoff, the laptop would never reach its sleep timeout while the app is running, even if you have walked away for hours.
 
-To prevent this, the app uses `A_TimeIdlePhysical` — an AutoHotkey counter that tracks real physical keyboard/mouse input and deliberately ignores the app's own synthetic input. When that counter reaches the *Give up after* threshold (default 20 min), the app stops pulsing. The laptop's sleep timer is then free to run normally, and the Cloud PC session will lock or disconnect per its own policy — there is nothing the app can do about that while you are genuinely not there.
+To prevent this, the app uses `A_TimeIdlePhysical` — an AutoHotkey counter that tracks real physical keyboard/mouse input and deliberately ignores the app's own synthetic input. When that counter reaches the *Give up after* threshold (default 20 min) **and the laptop is running on battery**, the app stops pulsing. The laptop's sleep timer is then free to run normally, and the Cloud PC session will lock or disconnect per its own policy — there is nothing the app can do about that while you are genuinely not there.
 
-Once you touch the keyboard or mouse, the app resumes pulsing immediately.
+This only matters on battery — there's no battery to drain while plugged into AC, so the give-up never triggers there and keep-alive keeps running no matter how long you've been idle. The app checks AC/battery status via Windows' own power status API (`GetSystemPowerStatus`) on every tick, so plugging or unplugging takes effect within a few seconds.
+
+Once you touch the keyboard or mouse — or plug into AC power while standing down — the app resumes pulsing immediately.
 
 To check your current sleep timeouts, open an elevated Command Prompt or PowerShell and run:
 
@@ -181,9 +183,10 @@ After changing the setting, test it: close the lid for a few minutes with a sess
 
 ### The laptop still does not go to sleep
 
-- Lower the **Give up after** threshold in Settings so the app stops pulsing sooner.
+- If the laptop is **plugged into AC power**, this is expected — the give-up/stand-down logic only applies on battery, since there's no battery to drain. Unplug to test, or change the power plan's AC sleep timeout if you want it to sleep while plugged in too.
+- On battery: lower the **Give up after** threshold in Settings so the app stops pulsing sooner.
 - Check `powercfg /requests` (elevated) to see if something other than W365 Pulse is holding the system awake.
-- If you are plugged in and sleep is set to "Never" in the power plan, that is a Windows setting to change under *Power Options*, not something the app controls.
+- If sleep is set to "Never" in the power plan, that is a Windows setting to change under *Power Options*, not something the app controls.
 
 ### The F15 key does not seem to reach the session
 
