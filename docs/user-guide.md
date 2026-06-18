@@ -63,8 +63,32 @@ Right-click the tray icon to open the menu:
 | **Check environment** | Full status report: confirms AutoHotkey v2 is running and a client is detected |
 | **Settings...** | Opens the full settings window |
 | **Start with Windows** | Adds or removes the app from the Windows startup list |
-| **Open log file** | Opens `w365pulse.log` in Notepad |
+| **View log...** | Opens the Log Viewer (see below) |
 | **Exit** | Quits the app |
+
+---
+
+## Log Viewer
+
+Right-click the tray icon → **View log...** opens a dedicated window for browsing the log, instead of a raw text file with the newest lines buried at the bottom.
+
+The left-hand tree lets you drill down two ways:
+
+- **All entries** — every log line, newest first
+- **By month** — Year → Month → Day → Hour
+- **By week** — Week (with its date range shown, e.g. "Week 25, 2026 (Jun 15 - Jun 18)") → Day → Hour
+
+Click any node to show only the entries under it, newest first, in the list on the right. Selecting a year or month shows everything underneath it; drilling down to an hour shows just that hour's entries.
+
+Buttons at the bottom:
+
+| Button | What it does |
+|---|---|
+| **Refresh** | Re-reads the log file and rebuilds the tree (useful if you leave the viewer open while the app keeps logging) |
+| **Open raw file** | Opens `w365pulse.log` directly in Notepad, for copying or searching the unprocessed text |
+| **Close** | Closes the viewer |
+
+The viewer is read-only — it doesn't modify the log file. Closing and reopening it always re-reads the current file from disk.
 
 ---
 
@@ -170,7 +194,7 @@ After changing the setting, test it: close the lid for a few minutes with a sess
 
 ### The session still disconnects
 
-1. Open the log file (right-click tray icon → **Open log file**) and look for `Pulse ->` lines. If you see them, the app is reaching the session.
+1. Open the Log Viewer (right-click tray icon → **View log...**) and look for `Pulse ->` lines. If you see them, the app is reaching the session.
 2. If you see `Activate failed`, the window-focus handoff is not completing. Try switching the keep-alive signal to **Mouse nudge** in Settings.
 3. Check **VM locks after** in Settings — if your Cloud PC's timeout is shorter than the default 15 min, lower this value so the hard ceiling is recalculated correctly.
 4. Confirm the app is not in *standing-down* mode (grey icon, tooltip says "standing down") — if so, touch the keyboard or mouse to resume.
@@ -213,7 +237,7 @@ The app waits for a natural idle gap (default 4 seconds of no keyboard/mouse inp
 In `%APPDATA%\W365Pulse\config.ini`. You can open this folder by typing `%APPDATA%\W365Pulse` into the File Explorer address bar.
 
 **Where is the log?**  
-Same folder: `%APPDATA%\W365Pulse\w365pulse.log`. It is capped at 1 MB (the old file is deleted when the limit is reached). Right-click the tray icon → **Open log file** opens it directly.
+Same folder: `%APPDATA%\W365Pulse\w365pulse.log`. It is capped at 1 MB (the old file is deleted when the limit is reached). Right-click the tray icon → **View log...** opens the Log Viewer (see above); use its **Open raw file** button if you want the plain text file instead.
 
 **Can I compile it to a standalone .exe?**  
 Yes. Use `Ahk2Exe` (included with AutoHotkey under `Compiler\`) on `W365Pulse.ahk`. Keep the three `.ico` files next to the resulting `.exe`.

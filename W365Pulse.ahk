@@ -4,7 +4,7 @@ Persistent
 SetTitleMatchMode(2)            ; window title = "contains"
 
 ; ============================================================================
-;  W365 Pulse v2.1.0 - keeps a Windows 365 / Remote Desktop session from
+;  W365 Pulse v2.2.0 - keeps a Windows 365 / Remote Desktop session from
 ;  logging out by briefly activating the session window (AttachThreadInput to
 ;  bypass Windows foreground-lock) and sending a no-op key over the connection.
 ;  Designed for a setup where the Cloud PC window lives on a dedicated screen.
@@ -12,9 +12,11 @@ SetTitleMatchMode(2)            ; window title = "contains"
 ;  merely open on its launcher screen - and stands down after prolonged real
 ;  inactivity, but only while running on battery, so the laptop can sleep
 ;  normally instead of running until empty; while plugged into AC it keeps
-;  pulsing regardless of idle time, since there's no battery to drain.
+;  pulsing regardless of idle time, since there's no battery to drain. The
+;  tray's "View log..." opens a drill-down viewer (month/week/day/hour) with
+;  newest entries shown first, instead of the raw append-only log file.
 ; ============================================================================
-AppVersion := "2.1.0"
+AppVersion := "2.2.0"
 
 ; ---- Paths -----------------------------------------------------------------
 ConfigDir  := A_AppData "\W365Pulse"
@@ -243,7 +245,7 @@ BuildTray() {
     tray.Add()
     tray.Add("Settings...",    ShowSettings)
     tray.Add("Start with Windows", MenuToggleStartup)
-    tray.Add("Open log file",  (*) => Run('notepad.exe "' LogFile '"'))
+    tray.Add("View log...", (*) => ShowLogViewer())
     tray.Add()
     tray.Add("Exit", (*) => ExitApp())
     tray.Default := "Pulse now"
@@ -623,6 +625,237 @@ KeyIndex(val) {
         if (v = val)
             return i
     return 1
+}
+
+; ============================================================================
+;  Log viewer - drill-down by month/week/day/hour, newest entries first
+; ============================================================================
+ShowLogViewer(*) {
+    global LogFile, AppVersion
+    static G := ""
+    if (G) {
+        try {
+            G.Show()
+            return
+        }
+    }
+
+    entries := ParseLogEntries()
+    groups  := BuildLogGroups(entries)
+
+    G := Gui("-MinimizeBox -MaximizeBox", "W365 Pulse v" AppVersion " - Log Viewer")
+    G.SetFont("s10", "Segoe UI")
+
+    TV := G.Add("TreeView", "x10 y10 w280 h480")
+    nodeEntries := PopulateLogTree(TV, entries, groups)
+    TV.OnEvent("ItemSelect", OnSelect)
+
+    LV := G.Add("ListView", "x300 y10 w560 h480", ["Time", "Message"])
+    LV.ModifyCol(1, 140)
+    LV.ModifyCol(2, 405)
+
+    G.Add("Button", "x10 y500 w90 h28", "Refresh").OnEvent("Click", RefreshViewer)
+    G.Add("Button", "x108 y500 w120 h28", "Open raw file").OnEvent("Click", (*) => Run('notepad.exe "' LogFile '"'))
+    G.Add("Button", "x780 y500 w80 h28", "Close").OnEvent("Click", (*) => CloseViewer())
+
+    G.OnEvent("Close", (*) => CloseViewer())
+    G.OnEvent("Escape", (*) => CloseViewer())
+
+    DisplayLogEntries(entries.Length ? AllIndices(entries.Length) : [])
+    G.Show("w870 h540")
+
+    OnSelect(ctrl, item) {
+        DisplayLogEntries(nodeEntries.Has(item) ? nodeEntries[item] : [])
+    }
+
+    DisplayLogEntries(idxArr) {
+        LV.Delete()
+        n := idxArr.Length
+        loop n {
+            e := entries[idxArr[n - A_Index + 1]]   ; reverse -> newest first
+            LV.Add(, e["ts"], e["msg"])
+        }
+    }
+
+    RefreshViewer(*) {
+        entries := ParseLogEntries()
+        groups  := BuildLogGroups(entries)
+        TV.Delete()
+        nodeEntries := PopulateLogTree(TV, entries, groups)
+        DisplayLogEntries(entries.Length ? AllIndices(entries.Length) : [])
+    }
+
+    CloseViewer() {
+        G.Destroy()
+        G := ""
+    }
+}
+
+; Parses the log file into an array of Maps: ts, date, y, m, d, h, week, msg.
+; "week" is the ISO year+week ("YYYYWW") used for the by-week drill-down.
+ParseLogEntries() {
+    global LogFile
+    entries := []
+    if !FileExist(LogFile)
+        return entries
+    content := ""
+    try content := FileRead(LogFile, "UTF-8")
+    for line in StrSplit(content, "`n", "`r") {
+        if (StrLen(line) < 21)
+            continue
+        ts := SubStr(line, 1, 19)
+        if !RegExMatch(ts, "^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$")
+            continue
+        y  := SubStr(ts, 1, 4)
+        mo := SubStr(ts, 6, 2)
+        d  := SubStr(ts, 9, 2)
+        h  := SubStr(ts, 12, 2)
+        dateKey := y "-" mo "-" d
+        wk := FormatTime(y . mo . d, "YWeek")
+        entries.Push(Map("ts", ts, "date", dateKey, "y", y, "m", mo, "d", d, "h", h,
+                          "week", wk, "msg", SubStr(line, 22)))
+    }
+    return entries
+}
+
+; Groups entry indices into two nested Maps for the two drill-down paths:
+;   byMonth[year][month][date][hour]  -> array of entry indices
+;   byWeek [isoWeek][date][hour]      -> array of entry indices
+; weekRange[isoWeek] tracks the min/max date seen, for the week's display label.
+BuildLogGroups(entries) {
+    byMonth := Map()
+    byWeek  := Map()
+    weekRange := Map()
+    for idx, e in entries {
+        y := e["y"], mo := e["m"], dateKey := e["date"], h := e["h"], wk := e["week"]
+
+        if !byMonth.Has(y)
+            byMonth[y] := Map()
+        if !byMonth[y].Has(mo)
+            byMonth[y][mo] := Map()
+        if !byMonth[y][mo].Has(dateKey)
+            byMonth[y][mo][dateKey] := Map()
+        if !byMonth[y][mo][dateKey].Has(h)
+            byMonth[y][mo][dateKey][h] := []
+        byMonth[y][mo][dateKey][h].Push(idx)
+
+        if !byWeek.Has(wk)
+            byWeek[wk] := Map()
+        if !byWeek[wk].Has(dateKey)
+            byWeek[wk][dateKey] := Map()
+        if !byWeek[wk][dateKey].Has(h)
+            byWeek[wk][dateKey][h] := []
+        byWeek[wk][dateKey][h].Push(idx)
+
+        if !weekRange.Has(wk)
+            weekRange[wk] := Map("min", dateKey, "max", dateKey)
+        else {
+            ; StrCompare, not "<"/">" - AHK tries (and fails) to coerce
+            ; dash-containing date strings like "2026-06-15" to numbers.
+            if (StrCompare(dateKey, weekRange[wk]["min"]) < 0)
+                weekRange[wk]["min"] := dateKey
+            if (StrCompare(dateKey, weekRange[wk]["max"]) > 0)
+                weekRange[wk]["max"] := dateKey
+        }
+    }
+    return Map("byMonth", byMonth, "byWeek", byWeek, "weekRange", weekRange)
+}
+
+; Builds the TreeView (an "All entries" node, then "By month" Year/Month/Day/Hour,
+; then "By week" Week/Day/Hour) and returns a Map of TreeView item ID -> array of
+; entry indices for that node's whole subtree, used to populate the ListView.
+PopulateLogTree(TV, entries, groups) {
+    nodeEntries := Map()
+    byMonth   := groups["byMonth"]
+    byWeek    := groups["byWeek"]
+    weekRange := groups["weekRange"]
+
+    allId := TV.Add("All entries (" entries.Length ")", 0)
+    nodeEntries[allId] := AllIndices(entries.Length)
+
+    rootMonth := TV.Add("By month", 0)
+    for y in SortedKeysDesc(byMonth) {
+        yEntries := []
+        yId := TV.Add(y, rootMonth)
+        for mo in SortedKeysDesc(byMonth[y]) {
+            moEntries := []
+            moId := TV.Add(FormatTime(y . mo . "01", "MMMM yyyy"), yId)
+            for dateKey in SortedKeysDesc(byMonth[y][mo]) {
+                dEntries := []
+                dId := TV.Add(FormatTime(StrReplace(dateKey, "-", ""), "ddd, MMM d"), moId)
+                for h in SortedKeysDesc(byMonth[y][mo][dateKey]) {
+                    idxArr := byMonth[y][mo][dateKey][h]
+                    hId := TV.Add(h ":00", dId)
+                    nodeEntries[hId] := idxArr
+                    dEntries.Push(idxArr*)
+                }
+                nodeEntries[dId] := dEntries
+                moEntries.Push(dEntries*)
+            }
+            nodeEntries[moId] := moEntries
+            yEntries.Push(moEntries*)
+        }
+        nodeEntries[yId] := yEntries
+    }
+
+    rootWeek := TV.Add("By week", 0)
+    for wk in SortedKeysDesc(byWeek) {
+        wkEntries := []
+        wkYear := SubStr(wk, 1, 4)
+        wkNum  := SubStr(wk, 5, 2)
+        rng := weekRange[wk]
+        label := "Week " wkNum ", " wkYear "  (" FormatTime(StrReplace(rng["min"], "-", ""), "MMM d")
+            . " - " FormatTime(StrReplace(rng["max"], "-", ""), "MMM d") ")"
+        wkId := TV.Add(label, rootWeek)
+        for dateKey in SortedKeysDesc(byWeek[wk]) {
+            dEntries := []
+            dId := TV.Add(FormatTime(StrReplace(dateKey, "-", ""), "ddd, MMM d"), wkId)
+            for h in SortedKeysDesc(byWeek[wk][dateKey]) {
+                idxArr := byWeek[wk][dateKey][h]
+                hId := TV.Add(h ":00", dId)
+                nodeEntries[hId] := idxArr
+                dEntries.Push(idxArr*)
+            }
+            nodeEntries[dId] := dEntries
+            wkEntries.Push(dEntries*)
+        }
+        nodeEntries[wkId] := wkEntries
+    }
+
+    return nodeEntries
+}
+
+AllIndices(n) {
+    arr := []
+    loop n
+        arr.Push(A_Index)
+    return arr
+}
+
+; Returns the keys of a Map sorted newest/largest-first (plain string descending
+; sort is correct here because every key is a zero-padded, fixed-width string -
+; year "2026", month/day/hour "06", or ISO week "202625").
+SortedKeysDesc(m) {
+    keys := []
+    for k, v in m
+        keys.Push(k)
+    return SortDesc(keys)
+}
+
+SortDesc(arr) {
+    n := arr.Length
+    loop n - 1 {
+        i := A_Index + 1
+        key := arr[i]
+        j := i - 1
+        ; StrCompare, not "<" - see note in BuildLogGroups for why.
+        while (j >= 1 && StrCompare(arr[j], key) < 0) {
+            arr[j + 1] := arr[j]
+            j--
+        }
+        arr[j + 1] := key
+    }
+    return arr
 }
 
 ; ============================================================================

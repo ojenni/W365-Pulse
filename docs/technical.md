@@ -250,6 +250,27 @@ If the file exceeds 1 MB it is deleted and a new one started (simplest rotation 
 
 ---
 
+## Log viewer
+
+`ShowLogViewer()` (tray → "View log...") is a singleton `Gui` (same `static G` pattern as `ShowSettings()`) with a `TreeView` on the left and a `ListView` on the right, replacing the old behavior of opening the raw log in Notepad.
+
+**Parsing** (`ParseLogEntries()`): reads the whole log file, splits on `` `n ``/`` `r ``, and for each line validates the first 19 characters against `^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$` before treating it as a log entry (silently skips malformed/partial lines). Each entry becomes a `Map` with `ts`, `date` (`yyyy-MM-dd`), `y`/`m`/`d`/`h`, an ISO `week` key, and `msg`. The ISO week is computed via `FormatTime(y . m . d, "YWeek")`, which returns a `YYYYWW` string (e.g. `"202625"` = ISO week 25 of 2026).
+
+**Grouping** (`BuildLogGroups(entries)`): builds two parallel nested `Map` structures from the same entry list:
+- `byMonth[year][month][date][hour]` → array of entry indices
+- `byWeek[isoWeek][date][hour]` → array of entry indices
+- `weekRange[isoWeek]` → `{min, max}` date strings seen in that week, used only for the week node's display label (e.g. "Week 25, 2026 (Jun 15 - Jun 18)")
+
+**Tree construction** (`PopulateLogTree(TV, entries, groups)`): adds an "All entries" root, then a "By month" branch (Year → Month → Day → Hour) and a "By week" branch (Week → Day → Hour) to the `TreeView`, sorting each level's keys descending (newest first) via `SortedKeysDesc()`. While building, it accumulates each node's full subtree of entry indices bottom-up (`arr.Push(otherArr*)` to concatenate) into a `nodeEntries` Map keyed by the `TreeView` item ID — this is what gets looked up when a node is clicked.
+
+**Display** (`DisplayLogEntries(idxArr)`): clears and repopulates the `ListView`, iterating `idxArr` **in reverse** so the most recent entry within the selected node appears first — `idxArr` itself is built in chronological (ascending) order since entries are appended to it in file order.
+
+**Sorting helper gotcha**: `SortedKeysDesc()`/`SortDesc()` must use `StrCompare(a, b)` rather than the `<`/`>` operators. AHK v2's relational operators try to coerce dash-containing strings like `"2026-06-15"` to numbers and throw `Expected a Number but got a String` instead of falling back to a string comparison — this surfaced during testing as the entire log viewer silently failing to open (the auto-execute thread aborted before `G.Show()` ran, with no dialog visible). The same pitfall applies to the `weekRange` min/max tracking in `BuildLogGroups()`. **Any future string comparison added to this file should use `StrCompare()`, never `<`/`>`.**
+
+**Refresh**: the **Refresh** button re-parses the file and calls `TV.Delete()` (clears every node) before rebuilding the tree — needed because the log keeps growing while the viewer is open.
+
+---
+
 ## Startup registration
 
 `SetStartup(on)` writes or removes a `REG_SZ` value named `W365Pulse` under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`. The value is:
@@ -298,6 +319,7 @@ When a new feature is added to `W365Pulse.ahk`, update the following in the same
 | New window detection heuristic | *Window detection* section in this file; relevant FAQ/troubleshooting in user-guide.md |
 | Change to idle/sleep behavior | *Idle detection* section in this file; *Battery / sleep behavior* in user-guide.md and README.md |
 | New key/signal option | *Keep-alive signal* table in user-guide.md; `KeyVals`/`KeyLabels` section in this file |
+| Change to log format/fields | *Log viewer* section in this file (parsing regex assumes the existing format); *Log Viewer* section in user-guide.md |
 | Version bump | `AppVersion` in `W365Pulse.ahk`; header comment in `W365Pulse.ahk` |
 
 Also update the macOS port plan at `C:\Users\olive\.claude\plans\sprightly-moseying-waffle.md` for any behavioral change that would need an equivalent design on macOS.

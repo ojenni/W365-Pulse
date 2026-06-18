@@ -97,7 +97,8 @@ It lives in the system tray — teal pulse = active, amber clock = waiting for a
 - **Check environment** – reports whether the prerequisites are present (below)
 - **Settings...** – the configuration window (below)
 - **Start with Windows** – adds/removes an HKCU `Run` entry
-- **Open log file** / **Exit**
+- **View log...** – drill-down log viewer (month/week/day/hour, newest first) — see the [User Guide](docs/user-guide.md#log-viewer)
+- **Exit**
 
 ## Environment check
 On startup the app verifies its prerequisites and **only interrupts you if something
