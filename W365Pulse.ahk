@@ -4,7 +4,7 @@ Persistent
 SetTitleMatchMode(2)            ; window title = "contains"
 
 ; ============================================================================
-;  W365 Pulse v2.2.0 - keeps a Windows 365 / Remote Desktop session from
+;  W365 Pulse v2.2.1 - keeps a Windows 365 / Remote Desktop session from
 ;  logging out by briefly activating the session window (AttachThreadInput to
 ;  bypass Windows foreground-lock) and sending a no-op key over the connection.
 ;  Designed for a setup where the Cloud PC window lives on a dedicated screen.
@@ -14,9 +14,12 @@ SetTitleMatchMode(2)            ; window title = "contains"
 ;  normally instead of running until empty; while plugged into AC it keeps
 ;  pulsing regardless of idle time, since there's no battery to drain. The
 ;  tray's "View log..." opens a drill-down viewer (month/week/day/hour) with
-;  newest entries shown first, instead of the raw append-only log file.
+;  newest entries shown first, instead of the raw append-only log file. The
+;  startup environment check only pops up a dialog for a genuinely hard
+;  blocker (wrong AutoHotkey version) - "no client/session yet" is normal at
+;  startup and is only ever logged, not popped up uninvited.
 ; ============================================================================
-AppVersion := "2.2.0"
+AppVersion := "2.2.1"
 
 ; ---- Paths -----------------------------------------------------------------
 ConfigDir  := A_AppData "\W365Pulse"
@@ -358,21 +361,23 @@ MenuToggleStartup(*) {
 }
 
 ; ---- Dependency / environment check ----------------------------------------
-; Returns true if everything needed is present. On startup it only pops up when
-; something is genuinely missing; the tray "Check environment" item passes
-; verbose:=true to always show a full status report.
+; Returns true if everything needed is present right now. Only AutoHotkey
+; running the wrong version is treated as a hard blocker worth an unprompted
+; startup popup - having no client/session detected yet is the normal state
+; every time the app starts before you've opened a Cloud PC, so that's only
+; ever logged, never popped up, unless verbose:=true (the tray's "Check
+; environment" item, where the user explicitly asked to see the full report).
 CheckEnvironment(verbose := false) {
     global Cfg
-    lines := [], missing := []
+    lines := []
 
     ; 1. AutoHotkey v2 (guaranteed when run as a script, but report it)
     ahkOk := (SubStr(A_AhkVersion, 1, 1) = "2")
     lines.Push((ahkOk ? "[ OK ]  " : "[MISSING]  ") "AutoHotkey v2   (running " A_AhkVersion ")")
-    if !ahkOk
-        missing.Push("AutoHotkey v2`n        Download: https://www.autohotkey.com/")
 
     ; 2. A Windows 365 / Remote Desktop client we can keep alive
     pref := PreferredClient()
+    clientFound := true
     if (pref != "")
         lines.Push("[ OK ]  Windows 365 / Remote Desktop client`n             " pref)
     else if (Cfg["TargetExe"] != "" && ProcessExist(Cfg["TargetExe"]))
@@ -380,26 +385,18 @@ CheckEnvironment(verbose := false) {
     else if GetTargetHwnd()
         lines.Push("[ OK ]  A session window is currently open")
     else {
-        lines.Push("[MISSING]  No Windows 365 client or session window detected")
-        note := (MstscPath() != "")
-            ? "`n        (Classic Remote Desktop 'mstsc.exe' is present, but Windows 365`n         normally uses the Windows App or the browser.)"
-            : ""
-        missing.Push("A Windows 365 session to keep alive. Either:`n"
-            . "        - Install the Windows App:  https://aka.ms/windowsapp`n"
-            . "        - Or use the browser:  https://windows.cloud.microsoft`n"
-            . "          then open your Cloud PC and choose that window in`n"
-            . "          Settings > Target window." note)
+        clientFound := false
+        lines.Push("[ NONE ]  No Windows 365 client running and no session window open yet")
     }
 
     for ln in lines
         Log("Env: " StrReplace(StrReplace(ln, "`n", " "), "  ", " "))
 
-    if missing.Length {
-        msg := "W365 Pulse checked its prerequisites and something is missing:`n`n"
-        for m in missing
-            msg .= "  -  " m "`n`n"
-        msg .= "The app will keep running and start working as soon as the`nrequirement is met (use 'Re-detect window' once your session is open)."
-        MsgBox(msg, "W365 Pulse - missing prerequisites", 0x30)
+    if !ahkOk {
+        MsgBox("W365 Pulse checked its prerequisites and something is missing:`n`n"
+            . "  -  AutoHotkey v2`n        Download: https://www.autohotkey.com/`n`n"
+            . "The app will keep running and start working once this is fixed.",
+            "W365 Pulse - missing prerequisites", 0x30)
         return false
     }
 
@@ -407,10 +404,20 @@ CheckEnvironment(verbose := false) {
         report := ""
         for ln in lines
             report .= ln "`n`n"
-        report .= "Everything needed is in place."
+        if clientFound
+            report .= "Everything needed is in place."
+        else {
+            note := (MstscPath() != "")
+                ? " (Classic Remote Desktop 'mstsc.exe' is present, but Windows 365 normally`n         uses the Windows App or the browser.)`n`n"
+                : "`n`n"
+            report .= "No client or session detected yet." note
+                . "Either install the Windows App (https://aka.ms/windowsapp) or use the`n"
+                . "browser (https://windows.cloud.microsoft), then open your Cloud PC and`n"
+                . "use 'Re-detect window' - or pick that window in Settings > Target window."
+        }
         MsgBox(report, "W365 Pulse - Environment check", 0x40)
     }
-    return true
+    return clientFound
 }
 
 PreferredClient() {

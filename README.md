@@ -101,19 +101,20 @@ It lives in the system tray — teal pulse = active, amber clock = waiting for a
 - **Exit**
 
 ## Environment check
-On startup the app verifies its prerequisites and **only interrupts you if something
-is missing**:
+On startup the app silently checks two things and logs the result either way:
 
 - **AutoHotkey v2** – the runtime (always present when run as a script).
 - **A Windows 365 / Remote Desktop client** – detected as a running `msrdc.exe` /
-  `Windows365.exe`, an installed Windows App / Remote Desktop client on disk, or a
-  session window that's already open.
+  `Windows365.exe`, an installed Windows App / Remote Desktop client on disk, a
+  configured target process, or a session window that's already open.
 
-If none is found, a dialog tells you what's missing and where to get it
-(Windows App: https://aka.ms/windowsapp, or browser access at
-https://windows.cloud.microsoft — then pick that window in *Settings > Target
-window*). Run it any time from the tray's **Check environment** item for a full
-status report.
+A startup dialog only ever appears for the AutoHotkey check, since that's the one
+genuinely hard blocker. **No client/session detected yet is the normal state every
+time you start the app before opening a Cloud PC** – it's logged, not popped up.
+Run **Check environment** from the tray any time for a full status report
+(including what to do if no client/session is found: Windows App –
+https://aka.ms/windowsapp, or browser access at https://windows.cloud.microsoft –
+then pick that window in *Settings > Target window*).
 
 ## Settings window
 Right-click the tray icon and choose **Settings...**. Everything is set with

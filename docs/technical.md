@@ -228,13 +228,17 @@ Icon switching uses a `static CurIcon` guard (`"a"/"p"/"w"/"s"`) to avoid redund
 
 ## Environment check
 
-`CheckEnvironment(verbose := false)` is called at startup (silent unless something is missing) and from the tray's "Check environment" item (always shows a full report).
+`CheckEnvironment(verbose := false)` is called at startup and from the tray's "Check environment" item (`verbose := true`).
 
 Checks in order:
 1. **AutoHotkey v2** — `SubStr(A_AhkVersion, 1, 1) = "2"` (always passes when running as a script, reported for completeness).
-2. **A Windows 365 / Remote Desktop client** — `PreferredClient()` probes in order: running process (`ProcessExist`), installed on disk (common program file paths), App Paths registry key. Falls back to `GetTargetHwnd()` (session window already open). Falls back to note about `mstsc.exe` if present.
+2. **A Windows 365 / Remote Desktop client** — `PreferredClient()` probes in order: running process (`ProcessExist`), installed on disk (common program file paths), App Paths registry key. Falls back to `GetTargetHwnd()` (session window already open) or a configured `TargetExe` already running. Sets `clientFound := false` if none of these match (no popup for this — see below).
 
-If anything is missing, a dialog names the requirement and where to get it. The app continues running — it will work as soon as the requirement is met.
+**Only `!ahkOk` triggers an unprompted `MsgBox` at startup** (`return false` before the `verbose` check). `clientFound := false` is logged (`Env: [ NONE ] ...`) but never shown as a startup dialog — having no client/session detected is the normal state every single time the app starts before a Cloud PC session is open, so treating it as a startup interruption was a bug fixed after a v2.2.1 report: a user with the Windows App genuinely installed, just not currently connected, got nagged by the missing-prerequisites dialog on every launch. `GetTargetHwnd()`/`PreferredClient()`-based detection of MSIX-installed clients is inherently unreliable (no simple App Paths/disk-path registration for Store-installed apps), so rather than trying to perfectly detect "installed," the fix removes the popup for this case entirely and relies on logging + the on-demand verbose report instead.
+
+When `verbose = true`, the report always shows (whether `clientFound` is true or false) — the "no client/session yet" case gets the install/browser instructions inline in the report rather than as a separate forced dialog.
+
+The function's return value (`clientFound`, or `false` if `!ahkOk`) is unused by its only two call sites today — both call it for the logging/dialog side effects, not the return value.
 
 ---
 
