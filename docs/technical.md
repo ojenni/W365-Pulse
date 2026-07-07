@@ -111,7 +111,8 @@ State variables (all globals):
 | `Paused` | bool | Keep-alive manually suspended |
 | `StandingDown` | bool | Physical inactivity exceeded GiveUpMin |
 | `Waiting` | bool | No session window found |
-| `LastPulse` | int | `A_TickCount` of most recent pulse attempt (0 = pulse ASAP) |
+| `LastPulse` | int | `A_TickCount` of most recent pulse attempt (0 = pulse ASAP); on failure set to trigger retry in ~2 min |
+| `LastSuccessfulPulse` | int | `A_TickCount` of last pulse that actually reached the VM (0 = none this session); used by tooltip and failure logging |
 | `NextWindowCheck` | int | `A_TickCount` deadline for next window re-check while waiting |
 
 ---
@@ -143,7 +144,7 @@ State variables (all globals):
 
 ```
 1. ForceActivate(hwnd)
-2. WinWaitActive("ahk_id " hwnd, , 1)   — 1-second timeout
+2. WinWaitActive("ahk_id " hwnd, , 2)   — 2-second timeout (bumped from 1s: high CPU during video calls)
 3. Send(Cfg["Key"])
 4. Sleep(100)                            — brief settle before restoring focus
 5. WinActivate("ahk_id " prev)           — restore previous foreground window
@@ -167,6 +168,15 @@ ForceActivate(hwnd) {
 `AttachThreadInput` temporarily merges the input state of the AHK thread with the target window's thread, making `SetForegroundWindow` succeed. The attachment is removed immediately after.
 
 **Why this is necessary:** Windows App (`msrdc.exe`) and Remote Desktop clients use the Raw Input API (`WM_INPUT`) rather than the legacy `WM_KEYDOWN` messages. Raw Input is only delivered to the foreground window. `ControlSend` (which posts `WM_KEYDOWN` without focus) does not work — the keystroke reaches AHK's own message queue logic but is silently dropped by the client. The only reliable path is to genuinely steal focus, send a real keystroke, then restore focus.
+
+### Failure retry logic
+
+`DoPulse` sets `LastPulse` and `LastSuccessfulPulse` differently depending on outcome:
+
+- **Success (`ok = true`):** both are set to `A_TickCount`. Next attempt in `IntervalMin` minutes as normal.
+- **Failure (`ok = false`):** only `LastPulse` is updated — to `A_TickCount - (IntervalMin - 1) * 60000`, which makes the elapsed timer read `IntervalMin - 1` minutes at the moment of failure. Concretely: the interval gate passes ~1 minute later, and the `MaxMin` ceiling then fires ~1 minute after that → **retry within ~2 minutes of any failure**.
+
+**Why this matters:** a fullscreen meeting app (Teams, Zoom) can briefly block `ForceActivate`, causing `WinWaitActive` to time out. Before this fix, `LastPulse` always advanced to `A_TickCount` regardless of success, so the next attempt was `IntervalMin` (8) minutes later. With the default 15-minute VM timeout and a 9-minute ceiling, the failure sequence was: last success T=0 → failed pulse T=9min → next attempt T=17min → VM disconnects at T=15min. With the fix, the retry is at T=11min — 4 minutes before the VM times out. `LastSuccessfulPulse` is logged alongside the failure ("N min since last success") for diagnosis.
 
 ### Mouse nudge path (`Key = "{MouseNudge}"`)
 
@@ -220,7 +230,7 @@ IsOnACPower() {
 | `Paused` | `W365Pulse_paused.ico` | "W365 Pulse - Paused" |
 | `StandingDown` | `W365Pulse_paused.ico` | "standing down (idle N min) / Letting the system sleep..." |
 | `Waiting` | `W365Pulse_waiting.ico` (falls back to paused if missing) | "waiting for a session window / Re-checking every 5 minutes" |
-| none of the above | `W365Pulse.ico` | "Active / Target: [title] / Last pulse: N min ago" |
+| none of the above | `W365Pulse.ico` | "Active / Target: [title] / Last pulse: N min ago" — uses `LastSuccessfulPulse`, not `LastPulse`, so a failed attempt doesn't falsely show the pulse as recent |
 
 Icon switching uses a `static CurIcon` guard (`"a"/"p"/"w"/"s"`) to avoid redundant `TraySetIcon` calls on every 5-second tick.
 

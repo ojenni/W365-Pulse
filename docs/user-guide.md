@@ -197,7 +197,7 @@ After changing the setting, test it: close the lid for a few minutes with a sess
 ### The session still disconnects
 
 1. Open the Log Viewer (right-click tray icon → **View log...**) and look for `Pulse ->` lines. If you see them, the app is reaching the session.
-2. If you see `Activate failed`, the window-focus handoff is not completing. Try switching the keep-alive signal to **Mouse nudge** in Settings.
+2. If you see `Activate failed` entries, the window-focus handoff is not completing. This is the most common cause of disconnect during long video meetings: the meeting app (Teams, Zoom, etc.) can briefly block the focus steal. The app automatically retries within ~2 minutes of any failure, which is usually enough to stay within the VM's timeout window. If failures are frequent (many `Activate failed` entries in a row), switch the keep-alive signal to **Mouse nudge** in Settings — mouse movement uses a different path that isn't affected by focus.
 3. Check **VM locks after** in Settings — if your Cloud PC's timeout is shorter than the default 15 min, lower this value so the hard ceiling is recalculated correctly.
 4. Confirm the app is not in *standing-down* mode (grey icon, tooltip says "standing down") — if so, touch the keyboard or mouse to resume.
 

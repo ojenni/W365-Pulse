@@ -4,7 +4,7 @@ Persistent
 SetTitleMatchMode(2)            ; window title = "contains"
 
 ; ============================================================================
-;  W365 Pulse v2.2.1 - keeps a Windows 365 / Remote Desktop session from
+;  W365 Pulse v2.2.2 - keeps a Windows 365 / Remote Desktop session from
 ;  logging out by briefly activating the session window (AttachThreadInput to
 ;  bypass Windows foreground-lock) and sending a no-op key over the connection.
 ;  Designed for a setup where the Cloud PC window lives on a dedicated screen.
@@ -17,9 +17,12 @@ SetTitleMatchMode(2)            ; window title = "contains"
 ;  newest entries shown first, instead of the raw append-only log file. The
 ;  startup environment check only pops up a dialog for a genuinely hard
 ;  blocker (wrong AutoHotkey version) - "no client/session yet" is normal at
-;  startup and is only ever logged, not popped up uninvited.
+;  startup and is only ever logged, not popped up uninvited. When a pulse
+;  fails (e.g. a fullscreen meeting app briefly blocks the focus steal),
+;  the next attempt is scheduled ~2 minutes out rather than a full interval
+;  away, so the VM can't time out between two consecutive failed attempts.
 ; ============================================================================
-AppVersion := "2.2.1"
+AppVersion := "2.2.2"
 
 ; ---- Paths -----------------------------------------------------------------
 ConfigDir  := A_AppData "\W365Pulse"
@@ -53,7 +56,8 @@ KeyLabels := ["F15 - invisible (recommended)", "F14", "F13", "Shift tap", "Mouse
 
 LoadConfig()
 Paused   := !Cfg["Enabled"]
-LastPulse := 0                  ; A_TickCount of last successful pulse (0 = pulse soon)
+LastPulse := 0                  ; A_TickCount of last pulse attempt (0 = pulse soon)
+LastSuccessfulPulse := 0        ; A_TickCount of last pulse that actually reached the VM
 Waiting   := false              ; true while no W365 session window is present
 NextWindowCheck := 0            ; A_TickCount gate for the 5-minute re-check while waiting
 StandingDown := false           ; true once real inactivity exceeds GiveUpMin
@@ -68,7 +72,7 @@ CheckEnvironment()              ; warn at startup only if a prerequisite is miss
 ;  Core loop
 ; ============================================================================
 Tick(*) {
-    global LastPulse, Cfg, Paused, Waiting, NextWindowCheck, StandingDown
+    global LastPulse, LastSuccessfulPulse, Cfg, Paused, Waiting, NextWindowCheck, StandingDown
     UpdateTip()
     if Paused
         return
@@ -120,7 +124,7 @@ Tick(*) {
 }
 
 DoPulse(manual) {
-    global LastPulse, Cfg
+    global LastPulse, LastSuccessfulPulse, Cfg
     hwnd := GetTargetHwnd()
     if !hwnd {
         Log("No target window found")
@@ -143,12 +147,15 @@ DoPulse(manual) {
             ok := true
         } else {
             ForceActivate(hwnd)
-            if WinWaitActive("ahk_id " hwnd, , 1) {
+            if WinWaitActive("ahk_id " hwnd, , 2) {   ; 2s timeout: 1s was too tight under high CPU (video calls)
                 Send(Cfg["Key"])
                 Sleep(100)
                 ok := true
             } else {
-                Log("Activate failed")
+                ago := LastSuccessfulPulse > 0
+                    ? Round((A_TickCount - LastSuccessfulPulse) / 60000) " min since last success"
+                    : "no prior success this session"
+                Log("Activate failed (" ago ") - retrying sooner")
             }
         }
     } catch as e {
@@ -157,11 +164,21 @@ DoPulse(manual) {
         if (prev && Cfg["Key"] != "{MouseNudge}")
             try WinActivate("ahk_id " prev)
     }
-    LastPulse := A_TickCount          ; always advance, so we don't spam on error
     if ok {
+        LastPulse := A_TickCount
+        LastSuccessfulPulse := A_TickCount
         Log("Pulse -> " WinGetTitle("ahk_id " hwnd))
         if (manual || Cfg["Notify"])
             TrayTip("W365 Pulse", "Keep-alive sent.", 0x1)
+    } else {
+        ; Schedule retry ~2 minutes out instead of waiting a full interval.
+        ; Root cause of VM dropping during meetings: ForceActivate can be briefly
+        ; blocked by a fullscreen Teams/Zoom window. With the old code, a failed
+        ; activate at minute 9 (ceiling) → next attempt at minute 17 → VM timeout
+        ; at minute 15 → disconnect. Setting LastPulse to IntervalMin-1 minutes ago
+        ; means the interval gate passes in ~1 min, then the MaxMin ceiling fires
+        ; ~1 min after that → retry within 2 minutes of any failure.
+        LastPulse := A_TickCount - (Cfg["IntervalMin"] - 1) * 60000
     }
     UpdateTip()
     return ok
@@ -273,7 +290,7 @@ RefreshChecks() {
 }
 
 UpdateTip() {
-    global Paused, LastPulse, ActiveIcon, PausedIcon, WaitingIcon, Waiting, StandingDown
+    global Paused, LastPulse, LastSuccessfulPulse, ActiveIcon, PausedIcon, WaitingIcon, Waiting, StandingDown
     static CurIcon := ""
     if Paused {
         A_IconTip := "W365 Pulse - Paused"
@@ -300,18 +317,19 @@ UpdateTip() {
         TraySetIcon(ActiveIcon), CurIcon := "a"
     hwnd := GetTargetHwnd()
     tgt  := hwnd ? WinGetTitle("ahk_id " hwnd) : "no window found"
-    ago  := LastPulse ? Round((A_TickCount - LastPulse) / 60000, 1) " min ago" : "pending"
+    ago  := LastSuccessfulPulse ? Round((A_TickCount - LastSuccessfulPulse) / 60000, 1) " min ago" : "pending"
     A_IconTip := "W365 Pulse - Active`nTarget: " tgt "`nLast pulse: " ago
 }
 
 ; ---- Menu handlers ---------------------------------------------------------
 MenuTogglePause(*) {
-    global Paused, LastPulse, Cfg, Waiting, NextWindowCheck, StandingDown
+    global Paused, LastPulse, LastSuccessfulPulse, Cfg, Waiting, NextWindowCheck, StandingDown
     Paused := !Paused
     Cfg["Enabled"] := Paused ? 0 : 1
     SaveConfig()
     if !Paused {
         LastPulse := 0          ; resume -> pulse on next idle gap
+        LastSuccessfulPulse := 0
         Waiting := false        ; and re-check for the window right away
         NextWindowCheck := 0
         StandingDown := false
@@ -552,7 +570,7 @@ ShowSettings(*) {
     }
 
     SaveBtn(*) {
-        global Cfg, Paused, KeyVals, LastPulse, NextWindowCheck, StandingDown
+        global Cfg, Paused, KeyVals, LastPulse, LastSuccessfulPulse, NextWindowCheck, StandingDown
         vt  := uVmTimeout.Value
         iv  := uInterval.Value
         mx  := uMax.Value
@@ -586,6 +604,7 @@ ShowSettings(*) {
         SaveConfig()
         SetStartup(cbStartup.Value)
         LastPulse := 0
+        LastSuccessfulPulse := 0
         NextWindowCheck := 0
         StandingDown := false
         RefreshChecks()
